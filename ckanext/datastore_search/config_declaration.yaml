@@ -1,0 +1,24 @@
+version: 1
+groups:
+  - annotation: ckanext-datastore-search settings
+    options:
+      - key: ckanext.datastore_search.engine
+        default: solr
+        description: |
+          Name of the engine to use.
+        validators: ignore_missing
+        required: false
+      - key: ckanext.datastore_search.url
+        default: None
+        description: |
+          The URL of the search engine.
+        example: |
+          http://solr-devm:8983
+        required: true
+      - key: ckanext.datastore_search.prefix
+        default: datastore_
+        description: |
+          Prefix to the index names.
+        validators: ignore_missing
+        example: ds_res_
+        required: false

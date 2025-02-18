@@ -1,22 +1,20 @@
-from ckan.types import Context
+from ckan.types import Context, DataDict
 from typing import Any
 
 import ckan.plugins as plugins
 from ckan.common import CKANConfig
 
-from ckanext.datastore_search_solr.interfaces import IDatastoreSearchBackend
+from ckanext.datastore_search.interfaces import IDatastoreSearchBackend
+
+
+class DatastoreSearchException(Exception):
+    pass
 
 
 class DatastoreSearchBackend:
-    """Base class for all datastore backends.
+    """Base class for all datastore search backends.
 
-    # TODO: update docs...
-    Very simple example of implementation based on SQLite can be found in
-    `ckanext.example_idatastorebackend`. In order to use it, set
-    datastore.write_url to
-    'example-sqlite:////tmp/database-name-on-your-choice'
-
-    :prop _backend: mapping(schema, class) of all registered backends
+    :prop _backend: mapping(engine, class) of all registered backends
     :type _backend: dictonary
     :prop _active_backend: current active backend
     :type _active_backend: DatastoreSearchBackend
@@ -24,6 +22,10 @@ class DatastoreSearchBackend:
 
     _backends = {}
     _active_backend: "DatastoreSearchBackend"
+    url = plugins.toolkit.config.get(
+        'ckanext.datastore_search.url')
+    prefix = plugins.toolkit.config.get(
+        'ckanext.datastore_search.prefix', 'datastore_')
 
     @classmethod
     def register_backends(cls):
@@ -36,15 +38,14 @@ class DatastoreSearchBackend:
     def set_active_backend(cls, config: CKANConfig):
         """Choose most suitable backend depending on configuration
 
+        ckanext.datastore_search.engine
+
         :param config: configuration object
         :rtype: ckan.common.CKANConfig
 
         """
-        schema = config.get('ckan.datastore_search.write_url').split(u':')[0]
-        read_schema = config.get(
-            'ckan.datastore_search.read_url').split(u':')[0]
-        assert read_schema == schema, u'Read and write engines are different'
-        cls._active_backend = cls._backends[schema]()
+        engine = config.get('ckanext.datastore_search.engine', 'solr')
+        cls._active_backend = cls._backends[engine]()
 
     @classmethod
     def get_active_backend(cls):
@@ -66,46 +67,45 @@ class DatastoreSearchBackend:
     def create(
             self,
             context: Context,
-            data_dict: dict[str, Any],
-            plugin_data: dict[int, dict[str, Any]]) -> Any:
-        """Create new resourct inside datastore.
+            data_dict: DataDict) -> Any:
+        """Create new resource inside the search index.
 
         Called by `datastore_create`.
 
-        :param data_dict: See `ckanext.datastore.logic.action.datastore_create`
+        :param data_dict: See `ckanext.datastore_search.logic.action.datastore_create`
         :returns: The newly created data object
         :rtype: dictonary
         """
         raise NotImplementedError()
 
-    def upsert(self, context: Context, data_dict: dict[str, Any]) -> Any:
+    def upsert(self, context: Context, data_dict: DataDict) -> Any:
         """Update or create resource depending on data_dict param.
 
         Called by `datastore_upsert`.
 
-        :param data_dict: See `ckanext.datastore.logic.action.datastore_upsert`
+        :param data_dict: See `ckanext.datastore_search.logic.action.datastore_upsert`
         :returns: The modified data object
         :rtype: dictonary
         """
         raise NotImplementedError()
 
-    def delete(self, context: Context, data_dict: dict[str, Any]) -> Any:
-        """Remove resource from datastore.
+    def delete(self, context: Context, data_dict: DataDict) -> Any:
+        """Remove resource from the search index.
 
         Called by `datastore_delete`.
 
-        :param data_dict: See `ckanext.datastore.logic.action.datastore_delete`
+        :param data_dict: See `ckanext.datastore_search.logic.action.datastore_delete`
         :returns: Original filters sent.
         :rtype: dictonary
         """
         raise NotImplementedError()
 
-    def search(self, context: Context, data_dict: dict[str, Any]) -> Any:
+    def search(self, context: Context, data_dict: DataDict) -> Any:
         """Base search.
 
         Called by `datastore_search`.
 
-        :param data_dict: See `ckanext.datastore.logic.action.datastore_search`
+        :param data_dict: See `ckanext.datastore_search.logic.action.datastore_search`
         :rtype: dictonary with following keys
 
         :param fields: fields/columns and their extra metadata
@@ -124,31 +124,8 @@ class DatastoreSearchBackend:
         """
         raise NotImplementedError()
 
-    def search_sql(self, context: Context, data_dict: dict[str, Any]) -> Any:
-        """Advanced search.
-
-        Called by `datastore_search_sql`.
-        :param sql: a single seach statement
-        :type sql: string
-
-        :rtype: dictonary
-        :param fields: fields/columns and their extra metadata
-        :type fields: list of dictionaries
-        :param records: list of matching results
-        :type records: list of dictionaries
-        """
-        raise NotImplementedError()
-
     def resource_exists(self, id: str) -> bool:
-        """Define whether resource exists in datastore.
-        """
-        raise NotImplementedError()
-
-    def resource_fields(self, id: str) -> Any:
-        """Return dictonary with resource description.
-
-        Called by `datastore_info`.
-        :returns: A dictionary describing the columns and their types.
+        """Define whether resource exists in the search index.
         """
         raise NotImplementedError()
 
@@ -169,23 +146,9 @@ class DatastoreSearchBackend:
         raise NotImplementedError()
 
     def get_all_ids(self) -> list[str]:
-        """Return id of all resource registered in datastore.
+        """Return id of all resource registered in the search index.
 
         :returns: all resources ids
         :rtype: list of strings
         """
         raise NotImplementedError()
-
-    def create_function(self, *args: Any, **kwargs: Any) -> Any:
-        """Called by `datastore_function_create` action.
-        """
-        raise NotImplementedError()
-
-    def drop_function(self, *args: Any, **kwargs: Any) -> Any:
-        """Called by `datastore_function_delete` action.
-        """
-        raise NotImplementedError()
-
-    def resource_plugin_data(self, resource_id: str) -> dict[str, Any]:
-        raise NotImplementedError()
-
