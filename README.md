@@ -1,6 +1,6 @@
-[![Tests](https://github.com/JVickery-TBS/ckanext-datastore-search-plus/workflows/Tests/badge.svg?branch=main)](https://github.com/JVickery-TBS/ckanext-datastore-search-plus/actions)
+[![Tests](https://github.com/JVickery-TBS/ckanext-datastore-search-solr/workflows/Tests/badge.svg?branch=main)](https://github.com/JVickery-TBS/ckanext-datastore-search-solr/actions)
 
-# CKANEXT DataStore Search Plus
+# CKANEXT DataStore Search SOLR
 
 This plugin hooks into the creation and insertion of DataStore tables and records, and dynamically creates and alters search indices. By default, this plugin uses SOLR as the search engine.
 
@@ -22,7 +22,7 @@ Compatibility with core CKAN versions:
 
 ## Installation
 
-To install ckanext-datastore-search-plus:
+To install ckanext-datastore-search-solr:
 
 1. Activate your CKAN virtual environment, for example:
 
@@ -30,8 +30,8 @@ To install ckanext-datastore-search-plus:
 
 2. Clone the source and install it on the virtualenv:
   ```
-  git clone https://github.com/JVickery-TBS/ckanext-datastore-search-plus.git
-  cd ckanext-datastore-search-plus
+  git clone https://github.com/JVickery-TBS/ckanext-datastore-search-solr.git
+  cd ckanext-datastore-search-solr
   pip install -e .
 	pip install -r requirements.txt
   ```

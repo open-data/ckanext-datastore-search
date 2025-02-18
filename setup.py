@@ -15,6 +15,6 @@ setup(
     },
     entry_points='''
         [ckan.plugins]
-        datastore_search_plus=ckanext.datastore_search_plus.plugin:DataStoreSearchPlusPlugin
+        datastore_search_solr=ckanext.datastore_search_solr.plugin:DataStoreSearchSolrPlugin
     ''',
 )
