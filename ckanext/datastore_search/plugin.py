@@ -1,7 +1,7 @@
 import ckan.plugins as plugins
 
-from ckanext.datastore.interfaces import IDatastoreBackend
-from ckanext.datastore_search_solr.backend.solr import DatastoreSolrBackend
+from ckanext.datastore_search.interfaces import IDatastoreSearchBackend
+from ckanext.datastore_search.backend.solr import DatastoreSolrBackend
 
 from logging import getLogger
 
@@ -9,10 +9,10 @@ from logging import getLogger
 log = getLogger(__name__)
 
 
-class DataStoreSearchSolrPlugin(plugins.SingletonPlugin):
+class DataStoreSearchPlugin(plugins.SingletonPlugin):
     plugins.implements(plugins.IConfigurer)
     plugins.implements(plugins.IActions)
-    plugins.implements(IDatastoreBackend, inherit=True)
+    plugins.implements(IDatastoreSearchBackend, inherit=True)
 
     # IConfigurer
     def update_config(self, config):
@@ -22,6 +22,6 @@ class DataStoreSearchSolrPlugin(plugins.SingletonPlugin):
     def get_actions(self):
         return {}
 
-    # IDatastoreBackend
+    # IDatastoreSearchBackend
     def register_backends(self):
         return {'solr': DatastoreSolrBackend}
