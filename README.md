@@ -19,6 +19,23 @@ Compatibility with core CKAN versions:
 | 2.10             | yes    |
 | 2.11             | yes    |
 
+Compatibility with Python versions:
+
+| Python version    | Compatible?   |
+| --------------- | ------------- |
+| 2.7 and earlier | no    |
+| 3.7 and later            | yes    |
+
+
+## Prerequisites
+
+This plugin requires you to have a configset in your SOLR configsets directory:
+
+```
+mkdir -p $SOLR_HOME/configsets/datastore_resource/conf
+```
+
+Copy the `managed-schema` and `solrconfig.xml` from this repository (`ckanext/datastore_search/config/solr`) into the above directory.
 
 ## Installation
 
@@ -46,14 +63,20 @@ To install ckanext-datastore-search:
 
 ## Config settings
 
-None at present
+**ckanext.datastore_search.engine** controls which search engine you are using. this maps to your class via the `register_backends` method of `IDatastoreSearchBackend`:
 
-**TODO:** Document any optional config settings here. For example:
+	# (optional, default: solr).
+	ckanext.datastore_search.engine = solr
 
-	# The minimum number of hours to wait before re-checking a resource
-	# (optional, default: 24).
-	ckanext.development.some_setting = some_default_value
+**ckanext.datastore_search.url** is the URL to connect to your search engine's server:
 
+	# (required, default: None).
+	ckanext.datastore_search.url = http://solr-devm:8983
+
+**ckanext.datastore_search.prefix** controls the prefix added to the SOLR core names, followed by the resource ID:
+
+	# (optional, default: datastore_).
+	ckanext.datastore_search.prefix = ds_res_
 
 ## Tests
 
