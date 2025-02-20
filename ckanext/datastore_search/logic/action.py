@@ -15,13 +15,8 @@ def datastore_create(up_func: Action,
                      data_dict: DataDict) -> ChainedAction:
     # TODO: create and reload in backend implement
     func_result = up_func(context, data_dict)
-    log.info('    ')
-    log.info('DEBUGGING::datastore_create')
-    log.info('    ')
-    log.info(pprint(func_result))
-    log.info('    ')
     backend = DatastoreSearchBackend.get_active_backend()
-    result = backend.create(context, data_dict)
+    backend.create(context, func_result)
     return func_result
 
 

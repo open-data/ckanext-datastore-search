@@ -53,6 +53,14 @@ class DatastoreSearchBackend:
         """
         return cls._active_backend
 
+    @property
+    def field_type_map(self):
+        """
+        Map of DataStore field types to their corresponding
+        search index field types.
+        """
+        raise NotImplementedError()
+
     def configure(self, config: CKANConfig):
         """Configure backend, set inner variables, make some initial setup.
 
