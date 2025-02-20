@@ -2,7 +2,7 @@ import pysolr
 import json
 import requests
 
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 from ckan.types import Context, DataDict
 
 from ckan.plugins.toolkit import _, config
@@ -11,6 +11,8 @@ from ckanext.datastore_search.backend import (
     DatastoreSearchBackend,
     DatastoreSearchException
 )
+
+MAX_ERR_LEN = 1000
 
 from pprint import pprint
 from logging import getLogger
@@ -22,6 +24,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
     SOLR class for datastore search backend.
     """
     timeout = config.get('solr_timeout')
+    default_solr_fields = ['_id', '_version_', 'index_id', 'indexed_ts']
 
     @property
     def field_type_map(self):
@@ -77,13 +80,13 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             resp = json.loads(conn.ping())
             if resp.get('status') == 'OK':
                 return conn
-        except (KeyError, ValueError, pysolr.SolrError):
+        except pysolr.SolrError:
             pass
 
     def _send_api_request(self,
                           method: str,
                           endpoint: str,
-                          body: Optional[dict[str, Any]] = None):
+                          body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Sends a SOLR API v2 request.
 
@@ -103,52 +106,139 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
 
     def create(self,
                context: Context,
-               data_dict: DataDict) -> Any:
+               data_dict: DataDict,
+               connection: Optional[pysolr.Solr] = None) -> Any:
         """
-        Create or update & reload a core if the fields have changed.
+        Create or update & reload/reindex a core if the fields have changed.
         """
         rid = data_dict.get('resource_id')
         core_name = f'{self.prefix}{rid}'
-        conn = self._make_connection(core_name=core_name)
+        conn = self._make_connection(core_name=core_name) if not connection else connection
         if not conn:
             errmsg = _('Could not create SOLR core %s') % core_name
-            req_body = {'create': [{
-                            'name': core_name,
-                            'configSet': 'datastore_resource'}]}
-            try:
-                resp = self._send_api_request(method='POST',
-                                              endpoint='cores',
-                                              body=req_body)
-                if 'error' in resp:
-                    raise DatastoreSearchException(
-                        errmsg if not config.get('debug')
-                        else resp['error'].get('msg', errmsg))
-                conn = self._make_connection(core_name=core_name)
-            except (KeyError, ValueError):
-                raise DatastoreSearchException(errmsg)
+            req_body = {'create': [{'name': core_name,
+                                    'configSet': 'datastore_resource'}]}
+            resp = self._send_api_request(method='POST',
+                                            endpoint='cores',
+                                            body=req_body)
+            if 'error' in resp:
+                raise DatastoreSearchException(
+                    errmsg if not config.get('debug')
+                    else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
+            conn = self._make_connection(core_name=core_name)
         if not conn:
             raise DatastoreSearchException(
                 _('Could not connect to SOLR core %s') % core_name)
 
-        log.info('    ')
-        log.info('DEBUGGING::DatastoreSolrBackend::create')
-        log.info('    ')
-        log.info(pprint(data_dict))
-        log.info('    ')
-        solr_fields = json.loads(
-            conn._send_request(method='GET', path='schema/fields'))
-        log.info('    ')
-        log.info(pprint(solr_fields))
-        log.info('    ')
-        dev = []
-        for field in data_dict.get('fields', []):
-            dev.append({
-                'name': field.get('id'),
-                'type': self.field_type_map[field.get('type')],
-                'stored': True,
-                'indexed': True})
+        try:
+            solr_fields = json.loads(conn._send_request(
+                method='GET', path='schema/fields'))['fields']
+        except pysolr.SolrError as e:
+            raise DatastoreSearchException(
+                errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+        keyed_solr_fields = {}
+        for solr_field in solr_fields:
+            if solr_field['name'] in self.default_solr_fields:
+                continue
+            keyed_solr_fields[solr_field['name']] = solr_field
+        ds_field_ids = []
+        new_fields = []
+        updated_fields = []
+        remove_fields = []
+        #TODO: check for unique keys instead of just _id
+        for ds_field in data_dict.get('fields', []):
+            if ds_field['id'] not in self.default_solr_fields:
+                ds_field_ids.append(ds_field['id'])
+            if ds_field['id'] not in keyed_solr_fields:
+                new_fields.append({
+                    'name': ds_field['id'],
+                    'type': self.field_type_map[ds_field['type']],
+                    'stored': True,
+                    'indexed': True})
+                continue
+            if self.field_type_map[ds_field['type']] == keyed_solr_fields[ds_field['id']]['type']:
+                continue
+            updated_fields.append(dict(keyed_solr_fields[ds_field['id']],
+                                       type=self.field_type_map[ds_field['type']]))
+        for field_name in [i for i in keyed_solr_fields.keys() if i not in ds_field_ids]:
+            remove_fields.append({'name': field_name})
 
-        log.info('    ')
-        log.info(pprint(dev))
-        log.info('    ')
+        for f in new_fields:
+            errmsg = _('Could not add field %s to SOLR Schema %s' %
+                       (f['name'], core_name))
+            try:
+                resp = json.loads(conn._send_request(
+                    method='POST', path='schema',
+                    body=json.dumps({'add-field': f}),
+                    headers={'Content-Type': 'application/json'}))
+            except pysolr.SolrError as e:
+                raise DatastoreSearchException(
+                    errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+            if 'error' in resp:
+                raise DatastoreSearchException(
+                    errmsg if not config.get('debug')
+                    else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
 
+        for f in updated_fields:
+            errmsg = _('Could not update field %s on SOLR Schema %s' %
+                       (f['name'], core_name))
+            try:
+                resp = json.loads(conn._send_request(
+                    method='POST', path='schema',
+                    body=json.dumps({'replace-field': f}),
+                    headers={'Content-Type': 'application/json'}))
+            except pysolr.SolrError as e:
+                raise DatastoreSearchException(
+                    errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+            if 'error' in resp:
+                raise DatastoreSearchException(
+                    errmsg if not config.get('debug')
+                    else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
+
+        for f in remove_fields:
+            errmsg = _('Could not delete field %s from SOLR Schema %s' %
+                       (f['name'], core_name))
+            try:
+                resp = json.loads(conn._send_request(
+                    method='POST', path='schema',
+                    body=json.dumps({'delete-field': f}),
+                    headers={'Content-Type': 'application/json'}))
+            except pysolr.SolrError as e:
+                raise DatastoreSearchException(
+                    errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+            if 'error' in resp:
+                raise DatastoreSearchException(
+                    errmsg if not config.get('debug')
+                    else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
+
+        #TODO: datastore_create can take records[] as well...
+        # if the method == 'insert', then _id is not included...what to do then...
+
+        if new_fields or updated_fields or remove_fields:
+            #TODO: reindex as something has changed...
+            return
+
+    def upsert(self,
+               context: Context,
+               data_dict: DataDict,
+               connection: Optional[pysolr.Solr] = None) -> Any:
+        """
+        Insert records into the SOLR index.
+        """
+        rid = data_dict.get('resource_id')
+        core_name = f'{self.prefix}{rid}'
+        conn = self._make_connection(core_name=core_name) if not connection else connection
+
+        #TODO: check if not conn, then do datastore_search for fields and pass to self.create()
+
+        # if the method == 'insert', then _id is not included...what to do then...
+
+        if data_dict['records']:
+            for r in data_dict['records']:
+                try:
+                    conn.add(docs=[r], commit=False)
+                except pysolr.SolrError as e:
+                    errmsg = _('Failed to index records for %s' % core_name)
+                    raise DatastoreSearchException(
+                        errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+            conn.commit(waitSearcher=False)

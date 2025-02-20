@@ -4,19 +4,17 @@ from ckan.plugins import toolkit
 
 from ckanext.datastore_search.backend import DatastoreSearchBackend
 
-from pprint import pprint
-from logging import getLogger
-log = getLogger(__name__)
-
 
 @toolkit.chained_action
 def datastore_create(up_func: Action,
                      context: Context,
                      data_dict: DataDict) -> ChainedAction:
     # TODO: create and reload in backend implement
+    # records are not returned in datastore_create
+    records = data_dict.get('records', None)
     func_result = up_func(context, data_dict)
     backend = DatastoreSearchBackend.get_active_backend()
-    backend.create(context, func_result)
+    backend.create(context, dict(func_result, records=records))
     return func_result
 
 
@@ -26,7 +24,8 @@ def datastore_upsert(up_func: Action,
                      data_dict: DataDict) -> ChainedAction:
     # TODO: insert into backend implement
     func_result = up_func(context, data_dict)
-
+    backend = DatastoreSearchBackend.get_active_backend()
+    backend.upsert(context, dict(func_result))
     return func_result
 
 

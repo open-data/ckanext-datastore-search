@@ -1,11 +1,11 @@
-from typing import Any
+from typing import Any, Dict
 
 import ckan.plugins.interfaces as interfaces
 
 
 class IDatastoreSearchBackend(interfaces.Interface):
     """Allow custom implementations of datastore backend"""
-    def register_backends(self) -> dict[str, Any]:
+    def register_backends(self) -> Dict[str, Any]:
         """
         Register classes that inherits from DatastoreBackend.
 
