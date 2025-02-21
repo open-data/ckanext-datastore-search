@@ -7,6 +7,7 @@ This plugin hooks into the creation and insertion of DataStore tables and record
 
 ## Requirements
 
+https://github.com/ckan/ckan/pull/8684
 
 Compatibility with core CKAN versions:
 
@@ -25,6 +26,13 @@ Compatibility with Python versions:
 | --------------- | ------------- |
 | 2.7 and earlier | no    |
 | 3.7 and later            | yes    |
+
+Compatibility with SOLR versions:
+
+| SOLR version    | Compatible?   |
+| --------------- | ------------- |
+| 8.x and earlier | no    |
+| 9.x and later            | yes    |
 
 
 ## Prerequisites
