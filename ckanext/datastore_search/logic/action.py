@@ -35,7 +35,8 @@ def datastore_delete(up_func: Action,
                      data_dict: DataDict) -> ChainedAction:
     # TODO: delete from backend implement
     func_result = up_func(context, data_dict)
-
+    backend = DatastoreSearchBackend.get_active_backend()
+    backend.delete(context, dict(func_result))
     return func_result
 
 
@@ -44,8 +45,10 @@ def datastore_search(up_func: Action,
                      context: Context,
                      data_dict: DataDict) -> ChainedAction:
     # TODO: transform search filters to SOLR filters
+    solr_data_dict = dict(data_dict)
     func_result = up_func(context, data_dict)
-
+    backend = DatastoreSearchBackend.get_active_backend()
+    backend.search(context, solr_data_dict)
     return func_result
 
 

@@ -5,7 +5,7 @@ import requests
 from typing import Any, Optional, Dict
 from ckan.types import Context, DataDict
 
-from ckan.plugins.toolkit import _, config
+from ckan.plugins.toolkit import _, config, get_action
 
 from ckanext.datastore_search.backend import (
     DatastoreSearchBackend,
@@ -24,7 +24,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
     SOLR class for datastore search backend.
     """
     timeout = config.get('solr_timeout')
-    default_solr_fields = ['_id', '_version_', 'index_id', 'indexed_ts']
+    default_solr_fields = ['_id', '_version_', 'indexed_ts']
 
     @property
     def field_type_map(self):
@@ -212,11 +212,13 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                     else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
 
         #TODO: datastore_create can take records[] as well...
-        # if the method == 'insert', then _id is not included...what to do then...
+        #TODO: if the method == 'insert', then _id is not included...what to do then...
 
         if new_fields or updated_fields or remove_fields:
             #TODO: reindex as something has changed...
             return
+
+        #TODO: check if ds totalRecords is not same as indexed records...
 
     def upsert(self,
                context: Context,
@@ -229,9 +231,20 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         core_name = f'{self.prefix}{rid}'
         conn = self._make_connection(core_name=core_name) if not connection else connection
 
-        #TODO: check if not conn, then do datastore_search for fields and pass to self.create()
+        if not conn:
+            ds = get_action('datastore_search')(context, {'resource_id': rid,
+                                                          'limit': 0})
+            create_dict = {
+                'resource_id': rid,
+                'fields': [f for f in ds['fields'] if
+                           f['id'] not in self.default_solr_fields]}
+            self.create(context, create_dict)
+            conn = self._make_connection(core_name=core_name)
+        if not conn:
+            errmsg = _('Failed to index records for %s' % core_name)
+            raise DatastoreSearchException(errmsg)
 
-        # if the method == 'insert', then _id is not included...what to do then...
+        #TODO: if the method == 'insert', then _id is not included...what to do then...
 
         if data_dict['records']:
             for r in data_dict['records']:
@@ -242,3 +255,62 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                     raise DatastoreSearchException(
                         errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
             conn.commit(waitSearcher=False)
+
+        #TODO: check if ds totalRecords is not same as indexed records...
+
+    def search(self,
+               context: Context,
+               data_dict: DataDict,
+               connection: Optional[pysolr.Solr] = None) -> Any:
+        """
+        Searches the SOLR records.
+        """
+        rid = data_dict.get('resource_id')
+        core_name = f'{self.prefix}{rid}'
+        conn = self._make_connection(core_name=core_name) if not connection else connection
+
+        log.info('    ')
+        log.info('DEBUGGING::')
+        log.info('    ')
+        log.info(pprint(data_dict))
+        log.info('    ')
+
+    def delete(self,
+               context: Context,
+               data_dict: DataDict,
+               connection: Optional[pysolr.Solr] = None) -> Any:
+        """
+        Removes records from the SOLR index, or deletes the core entirely.
+        """
+        rid = data_dict.get('resource_id')
+        core_name = f'{self.prefix}{rid}'
+        conn = self._make_connection(core_name=core_name) if not connection else connection
+
+        if not conn:
+            return
+
+        if not data_dict.get('filters'):
+            errmsg = _('Could not delete SOLR core %s') % core_name
+            try:
+                conn.delete(q='*:*', commit=False)
+            except pysolr.SolrError as e:
+                raise DatastoreSearchException(
+                    errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+            conn.commit(waitSearcher=False)
+            resp = self._send_api_request(method='POST',
+                                          endpoint=f'cores/{core_name}/unload')
+            if 'error' in resp:
+                raise DatastoreSearchException(
+                    errmsg if not config.get('debug')
+                    else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
+            return
+
+        for key, value in data_dict.get('filters', {}).items():
+            errmsg = _('Could not delete records %s,%s in SOLR core %s') % (key,
+                                                                            value,
+                                                                            core_name)
+            try:
+                conn.delete(q='%s:%s' % (key, value), commit=False)
+            except pysolr.SolrError as e:
+                raise DatastoreSearchException(
+                    errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
