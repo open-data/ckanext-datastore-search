@@ -2,6 +2,7 @@ import pysolr
 import json
 import requests
 import re
+from logging import getLogger
 
 from typing import Any, Optional, Dict, cast, List
 from ckan.types import Context, DataDict
@@ -19,6 +20,8 @@ from ckanext.datastore_search.backend import (
 
 MAX_ERR_LEN = 1000
 PSQL_TO_SOLR_WILCARD_MATCH = re.compile('^_?|_?$')
+
+log = getLogger(__name__)
 
 
 class DatastoreSolrBackend(DatastoreSearchBackend):
