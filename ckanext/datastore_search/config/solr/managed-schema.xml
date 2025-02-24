@@ -21,7 +21,7 @@
   <fieldType name="plong" class="solr.LongPointField" omitNorms="true" positionIncrementGap="0"/>
   <fieldType name="plongs" class="solr.LongPointField" positionIncrementGap="0" multiValued="true"/>
   <fieldType name="string" class="solr.StrField" omitNorms="true" sortMissingLast="true"/>
-  <fieldType name="text" class="solr.TextField" positionIncrementGap="100">
+  <fieldType name="text" class="solr.TextField" positionIncrementGap="100" multiValued="false">
     <analyzer type="index">
       <tokenizer class="solr.WhitespaceTokenizerFactory"/>
       <filter class="solr.WordDelimiterGraphFilterFactory" generateNumberParts="1" generateWordParts="1" catenateAll="0" splitOnCaseChange="1" catenateNumbers="1" catenateWords="1"/>
@@ -39,7 +39,7 @@
       <filter class="solr.ASCIIFoldingFilterFactory"/>
     </analyzer>
   </fieldType>
-  <fieldType name="text_general" class="solr.TextField" positionIncrementGap="100">
+  <fieldType name="text_general" class="solr.TextField" positionIncrementGap="100" multiValued="false">
     <analyzer type="index">
       <tokenizer class="solr.WhitespaceTokenizerFactory"/>
       <filter class="solr.WordDelimiterGraphFilterFactory" generateNumberParts="1" generateWordParts="1" catenateAll="0" splitOnCaseChange="0" catenateNumbers="1" catenateWords="1"/>
@@ -53,7 +53,7 @@
       <filter class="solr.LowerCaseFilterFactory"/>
     </analyzer>
   </fieldType>
-  <fieldType name="text_ngram" class="solr.TextField" positionIncrementGap="100">
+  <fieldType name="text_ngram" class="solr.TextField" positionIncrementGap="100" multiValued="false">
     <analyzer type="index">
       <tokenizer class="solr.NGramTokenizerFactory" maxGramSize="10" minGramSize="2"/>
       <filter class="solr.LowerCaseFilterFactory"/>
@@ -66,4 +66,6 @@
   <field name="_version_" type="string" multiValued="false" indexed="true" stored="true"/>
   <field name="indexed_ts" type="date" default="NOW" multiValued="false" indexed="true" stored="true"/>
   <field name="_id" type="string" multiValued="false" indexed="true" required="true" stored="true"/>
+  <field name="_text_" type="text" multiValued="true" indexed="true" stored="false"/>
+  <copyField source="*" dest="_text_"/>
 </schema>

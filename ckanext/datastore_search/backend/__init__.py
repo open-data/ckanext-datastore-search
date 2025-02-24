@@ -72,6 +72,14 @@ class DatastoreSearchBackend:
 
         return config
 
+    def reindex(self,
+                resource_id: str,
+                connection: Any,
+                only_missing: bool = False) -> Any:
+        """Reindex/sync records between the database and the search engine.
+        """
+        raise NotImplementedError()
+
     def create(
             self,
             context: Context,
