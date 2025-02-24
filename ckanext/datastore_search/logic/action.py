@@ -10,6 +10,8 @@ from ckanext.datastore_search.backend import DatastoreSearchBackend
 ignore_missing = toolkit.get_validator('ignore_missing')
 ignore_not_sysadmin = toolkit.get_validator('ignore_not_sysadmin')
 
+#TODO: don't need context in backend, we can remove...
+
 
 @toolkit.chained_action
 def datastore_create(up_func: Action,

@@ -29,7 +29,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
     SOLR class for datastore search backend.
     """
     timeout = config.get('solr_timeout')
-    default_solr_fields = ['_id', '_version_', 'indexed_ts', '_text_']
+    default_search_fields = ['_id', '_version_', 'indexed_ts', '_text_']
 
     @property
     def field_type_map(self):
@@ -369,11 +369,11 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             log.debug('Removed SOLR Field %s for DataStore Resource %s' %
                       (f['name'], resource_id))
 
-        if 'records' in data_dict:
-            self.upsert(context, data_dict, connection=conn)
-
         if new_fields or updated_fields or remove_fields:
             self.reindex(resource_id, connection=conn)
+
+        if 'records' in data_dict:
+            self.upsert(context, data_dict, connection=conn)
 
         self._check_counts(resource_id, connection=conn)
 
@@ -413,7 +413,6 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             return
 
         resource_id = data_dict.get('resource_id')
-        core_name = f'{self.prefix}{resource_id}'
         conn = self._make_or_create_connection(resource_id) if not connection else connection
 
         query = data_dict.get('q', {})

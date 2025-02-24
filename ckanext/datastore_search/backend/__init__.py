@@ -26,6 +26,7 @@ class DatastoreSearchBackend:
         'ckanext.datastore_search.url')
     prefix = plugins.toolkit.config.get(
         'ckanext.datastore_search.prefix', 'datastore_')
+    default_search_fields = ['_id']
 
     @classmethod
     def register_backends(cls):
