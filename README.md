@@ -7,6 +7,8 @@ This plugin hooks into the creation and insertion of DataStore tables and record
 
 ## Requirements
 
+SOLR 9+ running in Stand Alone mode. Currently, this plugin does NOT support Cloud Mode SOLR.
+
 https://github.com/ckan/ckan/pull/8684
 
 Compatibility with core CKAN versions:

@@ -22,6 +22,7 @@ MAX_ERR_LEN = 1000
 PSQL_TO_SOLR_WILCARD_MATCH = re.compile('^_?|_?$')
 
 log = getLogger(__name__)
+DEBUG = config.get('debug', False)
 
 
 class DatastoreSolrBackend(DatastoreSearchBackend):
@@ -105,7 +106,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         create_dict = {
             'resource_id': resource_id,
             'fields': [f for f in ds_result['fields'] if
-                       f['id'] not in self.default_solr_fields]}
+                       f['id'] not in self.default_search_fields]}
         self.create(self._get_site_context(), create_dict)
         conn = self._make_connection(resource_id)
         if conn:
@@ -159,7 +160,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                                       endpoint=f'cores/{core_name}/reload')
         if 'error' in resp:
             raise DatastoreSearchException(
-                errmsg if not config.get('debug')
+                errmsg if not DEBUG
                 else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
         log.debug('Reloaded SOLR Core for DataStore Resource %s' % resource_id)
 
@@ -170,7 +171,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         ds_total = ds_result['total']
         ds_field_ids = []
         for ds_field in ds_result.get('fields', []):
-            if ds_field['id'] not in self.default_solr_fields:
+            if ds_field['id'] not in self.default_search_fields:
                 ds_field_ids.append(ds_field['id'])
         ds_columns = '_id,' + ','.join([identifier(c) for c in ds_field_ids])
 
@@ -218,22 +219,25 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                     continue
                 try:
                     conn.add(docs=[r], commit=False)
-                    log.debug('Indexed DataStore record _id=%s for Resource %s' %
-                              (r['_id'], resource_id))
+                    if DEBUG:
+                        log.debug('Indexed DataStore record _id=%s for Resource %s' %
+                                  (r['_id'], resource_id))
                 except pysolr.SolrError as e:
                     raise DatastoreSearchException(
-                        errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+                        errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
             offset += 1000
         orphan_ids = set(indexed_ids) - set(existing_ids)
         for orphan_id in orphan_ids:
             try:
                 conn.delete(q='_id:%s' % orphan_id, commit=False)
-                log.debug('Unindexed DataStore record _id=%s for Resource %s' %
-                          (orphan_id, resource_id))
+                if DEBUG:
+                    log.debug('Unindexed DataStore record _id=%s for Resource %s' %
+                              (orphan_id, resource_id))
             except pysolr.SolrError as e:
                 raise DatastoreSearchException(
-                    errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+                    errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
         conn.commit(waitSearcher=False)
+        log.debug('Reindexed SOLR Core for DataStore Resource %s' % resource_id)
 
     def _check_counts(self,
                       resource_id: str,
@@ -267,6 +271,12 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         core_name = f'{self.prefix}{resource_id}'
         conn = self._make_connection(resource_id) if not connection else connection
         if not conn:
+            # FIXME: using configSet in API does not copy the configSet
+            #        into the core conf directory. We need to send some type
+            #        of signal to the SOLR server so it can run
+            #        solr create -c core_name -d configsets/datastore_resource
+            #        then does SOLR server need to send a signal back?
+            #        or can we just keep retrying a couple of times??
             errmsg = _('Could not create SOLR core %s') % core_name
             req_body = {'create': [{'name': core_name,
                                     'configSet': 'datastore_resource'}]}
@@ -275,7 +285,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                                           body=req_body)
             if 'error' in resp:
                 raise DatastoreSearchException(
-                    errmsg if not config.get('debug')
+                    errmsg if not DEBUG
                     else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
             log.debug('Created SOLR Core for DataStore Resource %s' % resource_id)
             conn = self._make_connection(resource_id)
@@ -288,10 +298,10 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                 method='GET', path='schema/fields'))['fields']
         except pysolr.SolrError as e:
             raise DatastoreSearchException(
-                errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+                errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
         keyed_solr_fields = {}
         for solr_field in solr_fields:
-            if solr_field['name'] in self.default_solr_fields:
+            if solr_field['name'] in self.default_search_fields:
                 continue
             keyed_solr_fields[solr_field['name']] = solr_field
         ds_field_ids = []
@@ -299,7 +309,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         updated_fields = []
         remove_fields = []
         for ds_field in data_dict.get('fields', []):
-            if ds_field['id'] not in self.default_solr_fields:
+            if ds_field['id'] not in self.default_search_fields:
                 ds_field_ids.append(ds_field['id'])
             if ds_field['id'] not in keyed_solr_fields:
                 new_fields.append({
@@ -325,10 +335,10 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                     headers={'Content-Type': 'application/json'}))
             except pysolr.SolrError as e:
                 raise DatastoreSearchException(
-                    errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+                    errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
             if 'error' in resp:
                 raise DatastoreSearchException(
-                    errmsg if not config.get('debug')
+                    errmsg if not DEBUG
                     else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
             log.debug('Added SOLR Field %s for DataStore Resource %s' %
                       (f['name'], resource_id))
@@ -343,10 +353,10 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                     headers={'Content-Type': 'application/json'}))
             except pysolr.SolrError as e:
                 raise DatastoreSearchException(
-                    errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+                    errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
             if 'error' in resp:
                 raise DatastoreSearchException(
-                    errmsg if not config.get('debug')
+                    errmsg if not DEBUG
                     else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
             log.debug('Modified SOLR Field %s for DataStore Resource %s' %
                       (f['name'], resource_id))
@@ -361,10 +371,10 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                     headers={'Content-Type': 'application/json'}))
             except pysolr.SolrError as e:
                 raise DatastoreSearchException(
-                    errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+                    errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
             if 'error' in resp:
                 raise DatastoreSearchException(
-                    errmsg if not config.get('debug')
+                    errmsg if not DEBUG
                     else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
             log.debug('Removed SOLR Field %s for DataStore Resource %s' %
                       (f['name'], resource_id))
@@ -392,12 +402,13 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             for r in data_dict['records']:
                 try:
                     conn.add(docs=[r], commit=False)
-                    log.debug('Indexed DataStore record _id=%s for Resource %s' %
-                              (r['_id'], resource_id))
+                    if DEBUG:
+                        log.debug('Indexed DataStore record _id=%s for Resource %s' %
+                                  (r['_id'], resource_id))
                 except pysolr.SolrError as e:
                     errmsg = _('Failed to index records for %s' % core_name)
                     raise DatastoreSearchException(
-                        errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+                        errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
             conn.commit(waitSearcher=False)
 
         self._check_counts(resource_id, connection=conn)
@@ -428,6 +439,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                                              '*',
                                              value.replace(':*', ''))))
         if query and isinstance(query, str):
+            # FIXME: solve the query of all _text_ field
             q = '*%s*' % re.sub(PSQL_TO_SOLR_WILCARD_MATCH,
                                 '*',
                                 query.replace(':*', ''))
@@ -452,7 +464,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         except pysolr.SolrError as e:
             errmsg = _('Failed to query records for resource %s' % resource_id)
             raise DatastoreSearchException(
-                errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+                errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
 
         return results.docs
 
@@ -474,14 +486,14 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                 log.debug('Unindexed all DataStore records for Resource %s' % resource_id)
             except pysolr.SolrError as e:
                 raise DatastoreSearchException(
-                    errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+                    errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
             conn.commit(waitSearcher=False)
             if data_dict.get('filters') is None:
                 resp = self._send_api_request(
                     method='POST', endpoint=f'cores/{core_name}/unload')
                 if 'error' in resp:
                     raise DatastoreSearchException(
-                        errmsg if not config.get('debug')
+                        errmsg if not DEBUG
                         else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
                 log.debug('Unloaded SOLR Core for DataStore Resource %s' % resource_id)
             return
@@ -491,11 +503,12 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                        (record['_id'], core_name)
             try:
                 conn.delete(q='_id:%s' % record['_id'], commit=False)
-                log.debug('Unindexed DataStore record _id=%s for Resource %s' %
-                          (record['_id'], resource_id))
+                if DEBUG:
+                    log.debug('Unindexed DataStore record _id=%s for Resource %s' %
+                              (record['_id'], resource_id))
             except pysolr.SolrError as e:
                 raise DatastoreSearchException(
-                    errmsg if not config.get('debug') else e.args[0][:MAX_ERR_LEN])
+                    errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
             conn.commit(waitSearcher=False)
 
         self._check_counts(resource_id, connection=conn)

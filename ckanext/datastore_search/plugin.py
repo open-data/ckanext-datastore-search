@@ -22,18 +22,9 @@ class DataStoreSearchPlugin(plugins.SingletonPlugin):
     plugins.implements(plugins.IConfigurer)
     plugins.implements(plugins.IActions)
     plugins.implements(IDatastoreSearchBackend, inherit=True)
+    plugins.implements(IDataPusher, inherit=True)
     if HAS_XLOADER:
-        try:
-            plugins.toolkit.get_action('xloader_submit')
-            plugins.implements(IXloader, inherit=True)
-        except KeyError:
-            pass
-    else:
-        try:
-            plugins.toolkit.get_action('datapusher_submit')
-            plugins.implements(IDataPusher, inherit=True)
-        except KeyError:
-            pass
+        plugins.implements(IXloader, inherit=True)
 
     # IDatastoreSearchBackend
     def register_backends(self):
