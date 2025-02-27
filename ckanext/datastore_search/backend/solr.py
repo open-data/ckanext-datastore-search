@@ -2,12 +2,14 @@ import pysolr
 import json
 import requests
 import re
+import rq
 from logging import getLogger
 
 from typing import Any, Optional, Dict, cast, List
 from ckan.types import Context, DataDict
 
 from ckan.plugins.toolkit import _, config, get_action
+from ckan.lib.redis import connect_to_redis
 
 from ckanext.datastore.logic.action import datastore_search_sql
 from ckanext.datastore.backend.postgres import identifier
@@ -20,9 +22,12 @@ from ckanext.datastore_search.backend import (
 
 MAX_ERR_LEN = 1000
 PSQL_TO_SOLR_WILCARD_MATCH = re.compile('^_?|_?$')
+REDIS_QUEUE_NAME = 'ckan_ds_solr_core_create'
 
 log = getLogger(__name__)
 DEBUG = config.get('debug', False)
+
+_ds_solr_queues: Dict[str, rq.Queue] = {}
 
 
 class DatastoreSolrBackend(DatastoreSearchBackend):
@@ -277,17 +282,28 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             #        solr create -c core_name -d configsets/datastore_resource
             #        then does SOLR server need to send a signal back?
             #        or can we just keep retrying a couple of times??
+            global _ds_solr_queues
+            redis_queue = None
             errmsg = _('Could not create SOLR core %s') % core_name
-            req_body = {'create': [{'name': core_name,
-                                    'configSet': 'datastore_resource'}]}
-            resp = self._send_api_request(method='POST',
-                                          endpoint='cores',
-                                          body=req_body)
-            if 'error' in resp:
-                raise DatastoreSearchException(
-                    errmsg if not DEBUG
-                    else resp['error'].get('msg', errmsg)[:MAX_ERR_LEN])
-            log.debug('Created SOLR Core for DataStore Resource %s' % resource_id)
+            if REDIS_QUEUE_NAME in _ds_solr_queues:
+                redis_queue = _ds_solr_queues[REDIS_QUEUE_NAME]
+            else:
+                redis_conn = connect_to_redis()
+                redis_queue = _ds_solr_queues[REDIS_QUEUE_NAME] = \
+                    rq.Queue(REDIS_QUEUE_NAME, connection=redis_conn)
+            if not redis_queue:
+                raise DatastoreSearchException(errmsg)
+            job = redis_queue.enqueue_call(
+                'create_solr_core.proc._create_solr_core',
+                args=[core_name, 'datastore_resource'],
+                timeout=60)
+            if not job.meta:
+                job.meta = {}
+            job.meta['title'] = 'SOLR Core creation %s' % core_name
+            job.save()
+            log.debug('Enqueued SOLR Core creation for DataStore Resource %s ' %
+                      resource_id)
+            # TODO: await or retry here???
             conn = self._make_connection(resource_id)
         if not conn:
             raise DatastoreSearchException(

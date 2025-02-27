@@ -1,2 +1,4 @@
 pysolr==3.10.0
 requests==2.32.3
+rq==2.0.0
+redis==5.2.0
