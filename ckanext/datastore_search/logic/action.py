@@ -1,3 +1,4 @@
+from typing import Dict, Any
 from ckan.types import Context, DataDict, Action, ChainedAction
 
 from ckan.plugins import toolkit
@@ -10,7 +11,10 @@ from ckanext.datastore_search.backend import DatastoreSearchBackend
 ignore_missing = toolkit.get_validator('ignore_missing')
 ignore_not_sysadmin = toolkit.get_validator('ignore_not_sysadmin')
 
-#TODO: don't need context in backend, we can remove...
+
+def datastore_search_create_callback(data_dict):
+    backend = DatastoreSearchBackend.get_active_backend()
+    backend.create_callback(data_dict)
 
 
 @toolkit.chained_action
@@ -20,7 +24,7 @@ def datastore_create(up_func: Action,
     data_dict['include_records'] = True
     func_result = up_func(context, data_dict)
     backend = DatastoreSearchBackend.get_active_backend()
-    backend.create(context, dict(func_result))
+    backend.create(dict(func_result))
     return func_result
 
 
@@ -31,7 +35,7 @@ def datastore_upsert(up_func: Action,
     data_dict['include_records'] = True
     func_result = up_func(context, data_dict)
     backend = DatastoreSearchBackend.get_active_backend()
-    backend.upsert(context, dict(func_result))
+    backend.upsert(dict(func_result))
     return func_result
 
 
@@ -42,7 +46,7 @@ def datastore_delete(up_func: Action,
     data_dict['include_records'] = True
     func_result = up_func(context, data_dict)
     backend = DatastoreSearchBackend.get_active_backend()
-    backend.delete(context, dict(func_result))
+    backend.delete(dict(func_result))
     return func_result
 
 
@@ -60,7 +64,7 @@ def datastore_search(up_func: Action,
     ds_meta = up_func(context, {'resource_id': data_dict.get('resource_id'),
                                 'limit': 0})
     backend = DatastoreSearchBackend.get_active_backend()
-    records = backend.search(context, data_dict)
+    records = backend.search(data_dict)
     return dict(ds_meta, records=records)
 
 

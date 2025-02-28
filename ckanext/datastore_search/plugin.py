@@ -1,7 +1,13 @@
 import ckan.plugins as plugins
 from ckan.common import CKANConfig
 
-from ckan.types import Context, DataDict
+from typing import Dict, Union
+from ckan.types import (
+    Context,
+    DataDict,
+    Action,
+    ChainedAction
+)
 
 from ckanext.datastore_search.interfaces import IDatastoreSearchBackend
 from ckanext.datastore_search.backend import DatastoreSearchBackend
@@ -27,7 +33,7 @@ class DataStoreSearchPlugin(plugins.SingletonPlugin):
         plugins.implements(IXloader, inherit=True)
 
     # IDatastoreSearchBackend
-    def register_backends(self):
+    def register_backends(self) -> Dict[str, DatastoreSearchBackend]:
         return {'solr': DatastoreSolrBackend}
 
     # IConfigurer
@@ -47,7 +53,7 @@ class DataStoreSearchPlugin(plugins.SingletonPlugin):
         config['ckan.datastore.sqlsearch.enabled'] = False
 
     # IActions
-    def get_actions(self):
+    def get_actions(self) -> Dict[str, Union[Action, ChainedAction]]:
         return {
             'datastore_create': action.datastore_create,
             'datastore_upsert': action.datastore_upsert,

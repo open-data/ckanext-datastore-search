@@ -22,3 +22,24 @@ groups:
         validators: ignore_missing
         example: ds_res_
         required: false
+      - key: ckanext.datastore_search.redis.queue_name
+        default: ckan_ds_create_index
+        description: |
+          Name of the REDIS queue.
+        validators: ignore_missing
+        example: ckan_ds_create_solr_core
+        required: false
+      - key: ckanext.datastore_search.redis.callback_queue_name
+        default: ckan_ds_create_index_callback
+        description: |
+          Name of the REDIS queue for the callback queue.
+        validators: ignore_missing
+        example: ckan_ds_create_solr_core_callback
+        required: false
+      - key: ckanext.datastore_search.solr.configset
+        default: datastore_resource
+        description: |
+          Name of the SOLR configset to use when creating new cores.
+        validators: ignore_missing
+        example: ckan_ds_resource
+        required: false

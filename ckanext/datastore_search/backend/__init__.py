@@ -1,4 +1,4 @@
-from ckan.types import Context, DataDict
+from ckan.types import DataDict
 from typing import Any
 
 import ckan.plugins as plugins
@@ -27,6 +27,12 @@ class DatastoreSearchBackend:
     prefix = plugins.toolkit.config.get(
         'ckanext.datastore_search.prefix', 'datastore_')
     default_search_fields = ['_id']
+    redis_queue_name = plugins.toolkit.config.get(
+        'ckanext.datastore_search.redis_queue',
+        'ckan_ds_create_index')
+    redis_callback_queue_name = plugins.toolkit.config.get(
+        'ckanext.datastore_search.redis.callback_queue_name',
+        'ckan_ds_create_index_callback')
 
     @classmethod
     def register_backends(cls):
@@ -81,10 +87,7 @@ class DatastoreSearchBackend:
         """
         raise NotImplementedError()
 
-    def create(
-            self,
-            context: Context,
-            data_dict: DataDict) -> Any:
+    def create(self, data_dict: DataDict) -> Any:
         """Create new resource inside the search index.
 
         Called by `datastore_create`.
@@ -95,7 +98,12 @@ class DatastoreSearchBackend:
         """
         raise NotImplementedError()
 
-    def upsert(self, context: Context, data_dict: DataDict) -> Any:
+    def create_callback(self, data_dict: DataDict) -> Any:
+        """Any special actions to execute during possible created index callbacks.
+        """
+        pass
+
+    def upsert(self, data_dict: DataDict) -> Any:
         """Update or create resource depending on data_dict param.
 
         Called by `datastore_upsert`.
@@ -106,7 +114,7 @@ class DatastoreSearchBackend:
         """
         raise NotImplementedError()
 
-    def delete(self, context: Context, data_dict: DataDict) -> Any:
+    def delete(self, data_dict: DataDict) -> Any:
         """Remove resource from the search index.
 
         Called by `datastore_delete`.
@@ -117,7 +125,7 @@ class DatastoreSearchBackend:
         """
         raise NotImplementedError()
 
-    def search(self, context: Context, data_dict: DataDict) -> Any:
+    def search(self, data_dict: DataDict) -> Any:
         """Base search.
 
         Called by `datastore_search`.

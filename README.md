@@ -7,9 +7,12 @@ This plugin hooks into the creation and insertion of DataStore tables and record
 
 ## Requirements
 
-SOLR 9+ running in Stand Alone mode. Currently, this plugin does NOT support Cloud Mode SOLR.
-
 https://github.com/ckan/ckan/pull/8684
+
+**If using the SOLR engine:**
+- SOLR 9+ running in Stand Alone mode. Currently, this plugin does NOT support Cloud Mode SOLR.
+- [Python SOLR Utils](https://github.com/JVickery-TBS/pysolr-utils) installed and service running on a SOLR server.
+- A `ckan -c <INI> jobs worker ckan_ds_create_index_callback` service running on a CKAN server. *See: ckanext.datastore_search.redis.callback_queue_name below*
 
 Compatibility with core CKAN versions:
 
@@ -87,6 +90,26 @@ To install ckanext-datastore-search:
 
 	# (optional, default: datastore_).
 	ckanext.datastore_search.prefix = ds_res_
+
+**ckanext.datastore_search.redis.queue_name** controls the REDIS queue name to enqueue SOLR core creations on.
+
+	# (optional, default: ckan_ds_create_index).
+	ckanext.datastore_search.redis.queue_name = ckan_ds_create_solr_core
+
+**ckanext.datastore_search.redis.callback_queue_name** controls the REDIS queue name to enqueue optional callbacks from the create queue. *Note:* this will be used inside the CKAN framework and have `ckan:<ckan.site_id>:` prefixed to it.
+
+	# (optional, default: ckan_ds_create_index_callback).
+	ckanext.datastore_search.redis.callback_queue_name = ckan_ds_create_solr_core_callback
+
+**ckanext.datastore_search.redis.callback_queue_name** controls the REDIS queue name to enqueue optional callbacks from the create queue. *Note:* this will be used inside the CKAN framework and have `ckan:<ckan.site_id>:` prefixed to it.
+
+	# (optional, default: ckan_ds_create_index_callback).
+	ckanext.datastore_search.redis.callback_queue_name = ckan_ds_create_solr_core_callback
+
+**ckanext.datastore_search.solr.configset** controls the SOLR configset name.
+
+	# (optional, default: datastore_resource).
+	ckanext.datastore_search.solr.configset = ckan_ds_resource
 
 ## Tests
 

@@ -2,14 +2,13 @@ import pysolr
 import json
 import requests
 import re
-import rq
 from logging import getLogger
 
 from typing import Any, Optional, Dict, cast, List
 from ckan.types import Context, DataDict
 
-from ckan.plugins.toolkit import _, config, get_action
-from ckan.lib.redis import connect_to_redis
+from ckan.plugins.toolkit import _, config, get_action, enqueue_job
+from ckan.lib.jobs import add_queue_name_prefix
 
 from ckanext.datastore.logic.action import datastore_search_sql
 from ckanext.datastore.backend.postgres import identifier
@@ -22,12 +21,9 @@ from ckanext.datastore_search.backend import (
 
 MAX_ERR_LEN = 1000
 PSQL_TO_SOLR_WILCARD_MATCH = re.compile('^_?|_?$')
-REDIS_QUEUE_NAME = 'ckan_ds_solr_core_create'
 
 log = getLogger(__name__)
 DEBUG = config.get('debug', False)
-
-_ds_solr_queues: Dict[str, rq.Queue] = {}
 
 
 class DatastoreSolrBackend(DatastoreSearchBackend):
@@ -36,6 +32,8 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
     """
     timeout = config.get('solr_timeout')
     default_search_fields = ['_id', '_version_', 'indexed_ts', '_text_']
+    configset_name = config.get('ckanext.datastore_search.solr.configset',
+                                'datastore_resource')
 
     @property
     def field_type_map(self):
@@ -95,30 +93,6 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         except pysolr.SolrError:
             pass
 
-    def _make_or_create_connection(self, resource_id: str) -> Optional[pysolr.Solr]:
-        """
-        Tries to make a SOLR connection to a core,
-        otherwise tries to creates a new core.
-        """
-        core_name = f'{self.prefix}{resource_id}'
-        conn = self._make_connection(resource_id)
-        if conn:
-            return conn
-        ds_result = get_action('datastore_search')(
-            self._get_site_context(), {'resource_id': resource_id,
-                                       'limit': 0,
-                                       'skip_search_engine': True})
-        create_dict = {
-            'resource_id': resource_id,
-            'fields': [f for f in ds_result['fields'] if
-                       f['id'] not in self.default_search_fields]}
-        self.create(self._get_site_context(), create_dict)
-        conn = self._make_connection(resource_id)
-        if conn:
-            return conn
-        raise DatastoreSearchException(
-            _('Could not connect to SOLR core %s') % core_name)
-
     def _send_api_request(self,
                           method: str,
                           endpoint: str,
@@ -158,7 +132,10 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         #       DS Resource could take a long time??
         context = self._get_site_context()
         core_name = f'{self.prefix}{resource_id}'
-        conn = self._make_or_create_connection(resource_id) if not connection else connection
+        conn = self._make_connection(resource_id) if not connection else connection
+
+        if not conn:
+            return
 
         errmsg = _('Could not reload SOLR core %s') % core_name
         resp = self._send_api_request(method='POST',
@@ -189,9 +166,9 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         indexed_ids = []
         while gathering_solr_records:
             solr_records = self.search(
-                context, {'resource_id': resource_id,
-                          'limit': 1000,
-                          'offset': offset},
+                {'resource_id': resource_id,
+                 'limit': 1000,
+                 'offset': offset},
                 conn)
             if not solr_records:
                 gathering_solr_records = False
@@ -266,7 +243,6 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             self.reindex(resource_id, connection, only_missing=True)
 
     def create(self,
-               context: Context,
                data_dict: DataDict,
                connection: Optional[pysolr.Solr] = None) -> Any:
         """
@@ -276,35 +252,24 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         core_name = f'{self.prefix}{resource_id}'
         conn = self._make_connection(resource_id) if not connection else connection
         if not conn:
-            # FIXME: using configSet in API does not copy the configSet
-            #        into the core conf directory. We need to send some type
-            #        of signal to the SOLR server so it can run
-            #        solr create -c core_name -d configsets/datastore_resource
-            #        then does SOLR server need to send a signal back?
-            #        or can we just keep retrying a couple of times??
-            global _ds_solr_queues
-            redis_queue = None
             errmsg = _('Could not create SOLR core %s') % core_name
-            if REDIS_QUEUE_NAME in _ds_solr_queues:
-                redis_queue = _ds_solr_queues[REDIS_QUEUE_NAME]
-            else:
-                redis_conn = connect_to_redis()
-                redis_queue = _ds_solr_queues[REDIS_QUEUE_NAME] = \
-                    rq.Queue(REDIS_QUEUE_NAME, connection=redis_conn)
-            if not redis_queue:
-                raise DatastoreSearchException(errmsg)
-            job = redis_queue.enqueue_call(
-                'create_solr_core.proc._create_solr_core',
-                args=[core_name, 'datastore_resource'],
-                timeout=60)
-            if not job.meta:
-                job.meta = {}
-            job.meta['title'] = 'SOLR Core creation %s' % core_name
-            job.save()
+            callback_queue = add_queue_name_prefix(self.redis_callback_queue_name)
+            enqueue_job(fn='solr_utils.create_solr_core.proc.create_solr_core',
+                        kwargs={
+                            'core_name': core_name,
+                            'config_set': self.configset_name,
+                            'callback_fn': 'ckanext.datastore_search.logic.'
+                                           'action.datastore_search_create_callback',
+                            'callback_queue': callback_queue,
+                            'callback_timeout': config.get('ckan.jobs.timeout', 300)},
+                        title='SOLR Core creation %s' % core_name,
+                        queue=self.redis_queue_name,
+                        rq_kwargs={'timeout': 60})
             log.debug('Enqueued SOLR Core creation for DataStore Resource %s ' %
                       resource_id)
-            # TODO: await or retry here???
-            conn = self._make_connection(resource_id)
+            # we return here as we do not know how long the background
+            # job to create the new SOLR core will take.
+            return
         if not conn:
             raise DatastoreSearchException(
                 _('Could not connect to SOLR core %s') % core_name)
@@ -399,12 +364,35 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             self.reindex(resource_id, connection=conn)
 
         if 'records' in data_dict:
-            self.upsert(context, data_dict, connection=conn)
+            self.upsert(data_dict, connection=conn)
 
         self._check_counts(resource_id, connection=conn)
 
+    def create_callback(self, data_dict: DataDict) -> Any:
+        """
+        Callback from the REDIS queue via SOLR server
+        after successful creation of the SOLR core.
+        """
+        if data_dict.get('exit_code'):
+            log.debug('SOLR core creation exit_code: %s' % data_dict.get('exit_code'))
+        if data_dict.get('stdout'):
+            log.debug('SOLR core creation stdout: %s' % data_dict.get('stdout'))
+        if data_dict.get('stderr'):
+            log.debug('SOLR core creation stderr: %s' % data_dict.get('stderr'))
+
+        resource_id = data_dict.get('core_name', '').replace(self.prefix, '')
+
+        ds_result = get_action('datastore_search')(
+            self._get_site_context(), {'resource_id': resource_id,
+                                       'limit': 0,
+                                       'skip_search_engine': True})
+        create_dict = {
+            'resource_id': resource_id,
+            'fields': [f for f in ds_result['fields'] if
+                       f['id'] not in self.default_search_fields]}
+        self.create(create_dict)
+
     def upsert(self,
-               context: Context,
                data_dict: DataDict,
                connection: Optional[pysolr.Solr] = None) -> Any:
         """
@@ -412,7 +400,10 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         """
         resource_id = data_dict.get('resource_id')
         core_name = f'{self.prefix}{resource_id}'
-        conn = self._make_or_create_connection(resource_id) if not connection else connection
+        conn = self._make_connection(resource_id) if not connection else connection
+
+        if not conn:
+            return
 
         if data_dict['records']:
             for r in data_dict['records']:
@@ -430,7 +421,6 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         self._check_counts(resource_id, connection=conn)
 
     def search(self,
-               context: Context,
                data_dict: DataDict,
                connection: Optional[pysolr.Solr] = None) -> Optional[List[Dict[str, Any]]]:
         """
@@ -440,7 +430,11 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             return
 
         resource_id = data_dict.get('resource_id')
-        conn = self._make_or_create_connection(resource_id) if not connection else connection
+        conn = self._make_connection(resource_id) if not connection else connection
+
+        if not conn:
+            raise DatastoreSearchException(
+                _('SOLR core does not exist for DataStore Resource %s') % resource_id)
 
         query = data_dict.get('q', {})
         filters = data_dict.get('filters', {})
@@ -485,7 +479,6 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         return results.docs
 
     def delete(self,
-               context: Context,
                data_dict: DataDict,
                connection: Optional[pysolr.Solr] = None) -> Any:
         """
@@ -493,7 +486,10 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         """
         resource_id = data_dict.get('resource_id')
         core_name = f'{self.prefix}{resource_id}'
-        conn = self._make_or_create_connection(resource_id) if not connection else connection
+        conn = self._make_connection(resource_id) if not connection else connection
+
+        if not conn:
+            return
 
         if not data_dict.get('filters'):
             errmsg = _('Could not delete SOLR core %s') % core_name
