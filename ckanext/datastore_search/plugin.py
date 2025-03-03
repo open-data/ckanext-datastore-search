@@ -1,7 +1,7 @@
 import ckan.plugins as plugins
 from ckan.common import CKANConfig
 
-from typing import Dict, Union
+from typing import Dict, Union, Type
 from ckan.types import (
     Context,
     DataDict,
@@ -16,10 +16,13 @@ from ckanext.datastore_search.logic import action
 
 from ckanext.datapusher.interfaces import IDataPusher
 try:
-    from ckanext.xloader.interfaces import IXloader
-    HAS_XLOADER = True
+    # type_ignore_reason: catch ImportError
+    from ckanext.xloader.interfaces import IXloader  # type: ignore
+    # type_ignore_reason: not redifined if ImportError
+    HAS_XLOADER = True  # type: ignore
 except ImportError:
-    HAS_XLOADER = False
+    # type_ignore_reason: not redifined if ImportError
+    HAS_XLOADER = False  # type: ignore
 
 
 @plugins.toolkit.blanket.config_declarations
@@ -30,10 +33,11 @@ class DataStoreSearchPlugin(plugins.SingletonPlugin):
     plugins.implements(IDatastoreSearchBackend, inherit=True)
     plugins.implements(IDataPusher, inherit=True)
     if HAS_XLOADER:
-        plugins.implements(IXloader, inherit=True)
+        # type_ignore_reason: never unbound due to HAS_XLOADER
+        plugins.implements(IXloader, inherit=True)  # type: ignore
 
     # IDatastoreSearchBackend
-    def register_backends(self) -> Dict[str, DatastoreSearchBackend]:
+    def register_backends(self) -> Dict[str, Type[DatastoreSearchBackend]]:
         return {'solr': DatastoreSolrBackend}
 
     # IConfigurer
@@ -76,4 +80,4 @@ class DataStoreSearchPlugin(plugins.SingletonPlugin):
             'resource_id': resource_dict.get('id'),
             'fields': [f for f in ds_result['fields'] if
                        f['id'] not in backend.default_search_fields]}
-        backend.create(context, create_dict)
+        backend.create(create_dict)

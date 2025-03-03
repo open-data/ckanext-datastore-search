@@ -1,3 +1,4 @@
+from typing import Dict, Any, Union
 from ckan.types import Context, DataDict, Action, ChainedAction
 
 from ckan.plugins import toolkit
@@ -64,7 +65,8 @@ def datastore_delete(up_func: Action,
 @toolkit.chained_action
 def datastore_search(up_func: Action,
                      context: Context,
-                     data_dict: DataDict) -> ChainedAction:
+                     data_dict: DataDict) -> Union[ChainedAction,
+                                                   Dict[str, Any]]:
     schema = context.get('schema', datastore_search_schema())
     schema['skip_search_engine'] = [ignore_missing, ignore_not_sysadmin]
     data_dict, errors = validate(data_dict, schema, context)

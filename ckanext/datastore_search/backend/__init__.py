@@ -1,5 +1,5 @@
 from ckan.types import DataDict
-from typing import Any
+from typing import Any, Dict, Optional
 
 import ckan.plugins as plugins
 from ckan.common import CKANConfig
@@ -61,7 +61,7 @@ class DatastoreSearchBackend:
         return cls._active_backend
 
     @property
-    def field_type_map(self):
+    def field_type_map(self) -> Dict[str, str]:
         """
         Map of DataStore field types to their corresponding
         search index field types.
@@ -80,8 +80,8 @@ class DatastoreSearchBackend:
         return config
 
     def reindex(self,
-                resource_id: str,
-                connection: Any,
+                resource_id: Optional[str] = None,
+                connection: Optional[Any] = None,
                 only_missing: bool = False) -> Any:
         """Reindex/sync records between the database and the search engine.
         """
