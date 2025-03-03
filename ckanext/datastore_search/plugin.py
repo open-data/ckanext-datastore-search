@@ -18,8 +18,7 @@ from ckanext.datapusher.interfaces import IDataPusher
 try:
     # type_ignore_reason: catch ImportError
     from ckanext.xloader.interfaces import IXloader  # type: ignore
-    # type_ignore_reason: not redifined if ImportError
-    HAS_XLOADER = True  # type: ignore
+    HAS_XLOADER = True
 except ImportError:
     # type_ignore_reason: not redifined if ImportError
     HAS_XLOADER = False  # type: ignore

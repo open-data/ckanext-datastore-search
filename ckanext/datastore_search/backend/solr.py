@@ -277,7 +277,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                     'core_name': core_name,
                     'config_set': self.configset_name,
                     'callback_fn': 'ckanext.datastore_search.logic.'
-                                    'action.datastore_search_create_callback',
+                                   'action.datastore_search_create_callback',
                     'callback_queue': callback_queue,
                     'callback_timeout': config.get('ckan.jobs.timeout', 300)},
                 title='SOLR Core creation %s' % core_name,
