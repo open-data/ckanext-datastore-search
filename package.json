@@ -1,0 +1,21 @@
+{
+  "name": "ckanext-datastore-search",
+  "version": "1.0.0",
+  "description": "CKAN plugin to create search indices for DataStore resources",
+  "dependencies": {},
+  "devDependencies": {
+    "pyright": "1.1.386"
+  },
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-data/ckanext-datastore-search.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/open-data/ckanext-datastore-search/issues"
+  },
+  "homepage": "https://github.com/open-data/ckanext-datastore-search#readme"
+}

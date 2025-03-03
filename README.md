@@ -1,4 +1,4 @@
-[![Tests](https://github.com/JVickery-TBS/ckanext-datastore-search/workflows/Tests/badge.svg?branch=main)](https://github.com/JVickery-TBS/ckanext-datastore-search/actions)
+[![Tests](https://github.com/open-data/ckanext-datastore-search/workflows/Tests/badge.svg?branch=main)](https://github.com/open-data/ckanext-datastore-search/actions)
 
 # CKANEXT DataStore Search
 
@@ -11,7 +11,7 @@ https://github.com/ckan/ckan/pull/8684
 
 **If using the SOLR engine:**
 - SOLR 9+ running in Stand Alone mode. Currently, this plugin does NOT support Cloud Mode SOLR.
-- [Python SOLR Utils](https://github.com/JVickery-TBS/pysolr-utils) installed and service running on a SOLR server.
+- [Python SOLR Utils](https://github.com/open-data/pysolr-utils) installed and service running on a SOLR server.
 - A `ckan -c <INI> jobs worker ckan_ds_create_index_callback` service running on a CKAN server. *See: ckanext.datastore_search.redis.callback_queue_name below*
 
 Compatibility with core CKAN versions:
@@ -60,7 +60,7 @@ To install ckanext-datastore-search:
 
 2. Clone the source and install it on the virtualenv:
   ```
-  git clone https://github.com/JVickery-TBS/ckanext-datastore-search.git
+  git clone https://github.com/open-data/ckanext-datastore-search.git
   cd ckanext-datastore-search
   pip install -e .
 	pip install -r requirements.txt
