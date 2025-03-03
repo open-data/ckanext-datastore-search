@@ -1,18 +1,20 @@
-from typing import Dict, Any
 from ckan.types import Context, DataDict, Action, ChainedAction
 
 from ckan.plugins import toolkit
 from ckan.lib.navl.dictization_functions import validate
 
 from ckanext.datastore.logic.schema import datastore_search_schema
-from ckanext.datastore_search.backend import DatastoreSearchBackend
+from ckanext.datastore_search.backend import (
+    DatastoreSearchBackend,
+    DatastoreSearchException
+)
 
 
 ignore_missing = toolkit.get_validator('ignore_missing')
 ignore_not_sysadmin = toolkit.get_validator('ignore_not_sysadmin')
 
 
-def datastore_search_create_callback(data_dict):
+def datastore_search_create_callback(data_dict: DataDict):
     backend = DatastoreSearchBackend.get_active_backend()
     backend.create_callback(data_dict)
 
@@ -24,7 +26,10 @@ def datastore_create(up_func: Action,
     data_dict['include_records'] = True
     func_result = up_func(context, data_dict)
     backend = DatastoreSearchBackend.get_active_backend()
-    backend.create(dict(func_result))
+    try:
+        backend.create(dict(func_result))
+    except DatastoreSearchException:
+        pass
     return func_result
 
 
@@ -35,7 +40,10 @@ def datastore_upsert(up_func: Action,
     data_dict['include_records'] = True
     func_result = up_func(context, data_dict)
     backend = DatastoreSearchBackend.get_active_backend()
-    backend.upsert(dict(func_result))
+    try:
+        backend.upsert(dict(func_result))
+    except DatastoreSearchException:
+        pass
     return func_result
 
 
@@ -46,7 +54,10 @@ def datastore_delete(up_func: Action,
     data_dict['include_records'] = True
     func_result = up_func(context, data_dict)
     backend = DatastoreSearchBackend.get_active_backend()
-    backend.delete(dict(func_result))
+    try:
+        backend.delete(dict(func_result))
+    except DatastoreSearchException:
+        pass
     return func_result
 
 
@@ -64,7 +75,10 @@ def datastore_search(up_func: Action,
     ds_meta = up_func(context, {'resource_id': data_dict.get('resource_id'),
                                 'limit': 0})
     backend = DatastoreSearchBackend.get_active_backend()
-    records = backend.search(data_dict)
+    try:
+        records = backend.search(dict(data_dict))
+    except DatastoreSearchException:
+        return up_func(context, data_dict)
     return dict(ds_meta, records=records)
 
 
@@ -74,5 +88,8 @@ def datastore_run_triggers(up_func: Action,
                            data_dict: DataDict) -> ChainedAction:
     func_result = up_func(context, data_dict)
     backend = DatastoreSearchBackend.get_active_backend()
-    backend.reindex(resource_id=data_dict.get('resource_id'))
+    try:
+        backend.reindex(resource_id=data_dict.get('resource_id'))
+    except DatastoreSearchException:
+        pass
     return func_result

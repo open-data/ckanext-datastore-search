@@ -85,8 +85,8 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         """
         core_name = f'{self.prefix}{resource_id}'
         conn_string = f'{self.url}/solr/{core_name}'
-        conn = pysolr.Solr(conn_string, timeout=self.timeout)
         try:
+            conn = pysolr.Solr(conn_string, timeout=self.timeout)
             resp = json.loads(conn.ping())
             if resp.get('status') == 'OK':
                 return conn
@@ -267,8 +267,6 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                         rq_kwargs={'timeout': 60})
             log.debug('Enqueued SOLR Core creation for DataStore Resource %s ' %
                       resource_id)
-            # we return here as we do not know how long the background
-            # job to create the new SOLR core will take.
             return
         if not conn:
             raise DatastoreSearchException(
