@@ -28,11 +28,16 @@ class DatastoreSearchBackend:
         'ckanext.datastore_search.prefix', 'datastore_')
     default_search_fields = ['_id']
     redis_queue_name = plugins.toolkit.config.get(
-        'ckanext.datastore_search.redis_queue',
+        'ckanext.datastore_search.redis.queue_name',
         'ckan_ds_create_index')
     redis_callback_queue_name = plugins.toolkit.config.get(
         'ckanext.datastore_search.redis.callback_queue_name',
         'ckan_ds_create_index_callback')
+    only_use_engine = plugins.toolkit.asbool(
+        plugins.toolkit.config.get(
+            'ckanext.datastore_search.only_use_engine', False))
+    min_rows_for_index = int(plugins.toolkit.config.get(
+        'ckanext.datastore_search.min_rows_for_index', 100000))
 
     @classmethod
     def register_backends(cls):

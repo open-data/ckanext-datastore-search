@@ -170,6 +170,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         gathering_solr_records = True
         offset = 0
         indexed_ids = []
+        indexed_records = []
         while gathering_solr_records:
             solr_records = self.search(
                 {'resource_id': resource_id,
@@ -180,51 +181,68 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                 gathering_solr_records = False
             # type_ignore_reason: checking solr_records
             indexed_ids += [r['_id'] for r in solr_records]  # type: ignore
+            if self.only_use_engine:
+                indexed_records += solr_records
             offset += 1000
-        gathering_ds_records = True
-        offset = 0
-        table_name = identifier(resource_id)
-        where_statement = 'WHERE _id NOT IN ({indexed_ids})'.format(
-            indexed_ids=','.join(indexed_ids)) if \
-            only_missing and indexed_ids and int(solr_total) <= int(ds_total) else ''
         core_name = f'{self.prefix}{resource_id}'
         errmsg = _('Failed to reindex records for %s' % core_name)
-        existing_ids = []
-        while gathering_ds_records:
-            sql_string = '''
-                SELECT {columns} FROM {table} {where_statement}
-                LIMIT 1000 OFFSET {offset}
-            '''.format(columns=ds_columns,
-                       table=table_name,
-                       where_statement=where_statement,
-                       offset=offset)
-            ds_result = datastore_search_sql(
-                context, {'sql': sql_string})
-            if not ds_result['records']:
-                gathering_ds_records = False
-            for r in ds_result['records']:
-                existing_ids.append(str(r['_id']))
-                if only_missing and indexed_ids and str(r['_id']) in indexed_ids:
-                    continue
+        if not self.only_use_engine:
+            gathering_ds_records = True
+            offset = 0
+            table_name = identifier(resource_id)
+            where_statement = 'WHERE _id NOT IN ({indexed_ids})'.format(
+                indexed_ids=','.join(indexed_ids)) if \
+                only_missing and indexed_ids and \
+                    int(solr_total) <= int(ds_total) else ''
+            existing_ids = []
+            while gathering_ds_records:
+                sql_string = '''
+                    SELECT {columns} FROM {table} {where_statement}
+                    LIMIT 1000 OFFSET {offset}
+                '''.format(columns=ds_columns,
+                        table=table_name,
+                        where_statement=where_statement,
+                        offset=offset)
+                ds_result = datastore_search_sql(
+                    context, {'sql': sql_string})
+                if not ds_result['records']:
+                    gathering_ds_records = False
+                for r in ds_result['records']:
+                    existing_ids.append(str(r['_id']))
+                    if only_missing and indexed_ids and str(r['_id']) in indexed_ids:
+                        continue
+                    try:
+                        conn.add(docs=[r], commit=False)
+                        if DEBUG:
+                            log.debug('Indexed DataStore record '
+                                      '_id=%s for Resource %s' %
+                                      (r['_id'], resource_id))
+                    except pysolr.SolrError as e:
+                        raise DatastoreSearchException(
+                            errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
+                offset += 1000
+            orphan_ids = set(indexed_ids) - set(existing_ids)
+            for orphan_id in orphan_ids:
+                try:
+                    conn.delete(q='_id:%s' % orphan_id, commit=False)
+                    if DEBUG:
+                        log.debug('Unindexed DataStore record '
+                                  '_id=%s for Resource %s' %
+                                  (orphan_id, resource_id))
+                except pysolr.SolrError as e:
+                    raise DatastoreSearchException(
+                        errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
+        else:
+            for r in indexed_records:
                 try:
                     conn.add(docs=[r], commit=False)
                     if DEBUG:
-                        log.debug('Indexed DataStore record _id=%s for Resource %s' %
+                        log.debug('Indexed DataStore record '
+                                  '_id=%s for Resource %s' %
                                   (r['_id'], resource_id))
                 except pysolr.SolrError as e:
                     raise DatastoreSearchException(
                         errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
-            offset += 1000
-        orphan_ids = set(indexed_ids) - set(existing_ids)
-        for orphan_id in orphan_ids:
-            try:
-                conn.delete(q='_id:%s' % orphan_id, commit=False)
-                if DEBUG:
-                    log.debug('Unindexed DataStore record _id=%s for Resource %s' %
-                              (orphan_id, resource_id))
-            except pysolr.SolrError as e:
-                raise DatastoreSearchException(
-                    errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
         conn.commit(waitSearcher=False)
         log.debug('Reindexed SOLR Core for DataStore Resource %s' % resource_id)
 
@@ -270,6 +288,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         if not conn:
             errmsg = _('Could not create SOLR core %s') % core_name
             callback_queue = add_queue_name_prefix(self.redis_callback_queue_name)
+            # TODO: add callback_extras to pass records if self.only_use_engine
             enqueue_job(
                 # type_ignore_reason: incomplete typing
                 fn='solr_utils.create_solr_core.proc.create_solr_core',  # type: ignore
@@ -279,7 +298,9 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                     'callback_fn': 'ckanext.datastore_search.logic.'
                                    'action.datastore_search_create_callback',
                     'callback_queue': callback_queue,
-                    'callback_timeout': config.get('ckan.jobs.timeout', 300)},
+                    'callback_timeout': config.get('ckan.jobs.timeout', 300),
+                    'callback_extras': {'records': data_dict.get('records', None)}
+                    if self.only_use_engine else None},
                 title='SOLR Core creation %s' % core_name,
                 queue=self.redis_queue_name,
                 rq_kwargs={'timeout': 60})
@@ -382,10 +403,11 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         if new_fields or updated_fields or remove_fields:
             self.reindex(resource_id, connection=conn)
 
-        if 'records' in data_dict:
+        if 'records' in data_dict and not self.only_use_engine:
             self.upsert(data_dict, connection=conn)
 
-        self._check_counts(resource_id, connection=conn)
+        if not self.only_use_engine:
+            self._check_counts(resource_id, connection=conn)
 
     def create_callback(self, data_dict: DataDict) -> Any:
         """
@@ -400,16 +422,22 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             log.debug('SOLR core creation stderr: %s' % data_dict.get('stderr'))
 
         resource_id = data_dict.get('core_name', '').replace(self.prefix, '')
-
+        context = self._get_site_context()
         ds_result = get_action('datastore_search')(
-            self._get_site_context(), {'resource_id': resource_id,
-                                       'limit': 0,
-                                       'skip_search_engine': True})
+            context, {'resource_id': resource_id,
+                      'limit': 0,
+                      'skip_search_engine': True})
         create_dict = {
             'resource_id': resource_id,
             'fields': [f for f in ds_result['fields'] if
                        f['id'] not in self.default_search_fields]}
         self.create(create_dict)
+
+        if self.only_use_engine and data_dict.get('extras', {}).get('records'):
+            get_action('datastore_upsert')(
+                context, {'resource_id': resource_id,
+                          'records': data_dict.get('extras', {}).get('records'),
+                          'method': 'insert'})
 
     def upsert(self,
                data_dict: DataDict,
@@ -438,7 +466,8 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                         errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
             conn.commit(waitSearcher=False)
 
-        self._check_counts(resource_id, connection=conn)
+        if not self.only_use_engine:
+            self._check_counts(resource_id, connection=conn)
 
     def search(self,
                data_dict: DataDict,
@@ -505,6 +534,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         """
         Removes records from the SOLR index, or deletes the core entirely.
         """
+        # FIXME: delete core if count less than min_rows_for_index??
         resource_id = data_dict.get('resource_id')
         core_name = f'{self.prefix}{resource_id}'
         conn = self._make_connection(resource_id) if not connection else connection
@@ -533,6 +563,37 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                 log.debug('Unloaded SOLR Core for DataStore Resource %s' % resource_id)
             return
 
+        if self.only_use_engine:
+            fq = []
+            for key, value in data_dict.get('filters', {}).items():
+                fq.append('%s:%s' % (key, value))
+            errmsg = _('Could not delete DataStore record(s) '
+                       'q=%s in SOLR core %s') % \
+                        (' AND '.join(fq), core_name)
+            collecting_deleted_records = True
+            offset = 0
+            deleted_records = []
+            try:
+                while collecting_deleted_records:
+                    results = conn.search(q=' AND '.join(fq),
+                                          start=offset,
+                                          limit=1000,
+                                          sort='_id asc')
+                    if not results:
+                        collecting_deleted_records = False
+                    deleted_records += results
+                    offset += 1000
+                conn.delete(q=' AND '.join(fq), commit=False)
+                if DEBUG:
+                    log.debug('Unindexed DataStore record(s) q=%s for Resource %s' %
+                              (' AND '.join(fq), resource_id))
+            except pysolr.SolrError as e:
+                raise DatastoreSearchException(
+                    errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
+            conn.commit(waitSearcher=False)
+            data_dict['deleted_records'] = deleted_records
+            return
+
         for record in data_dict.get('deleted_records', []):
             errmsg = _('Could not delete DataStore record _id=%s in SOLR core %s') % \
                        (record['_id'], core_name)
@@ -546,4 +607,5 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                     errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
             conn.commit(waitSearcher=False)
 
-        self._check_counts(resource_id, connection=conn)
+        if not self.only_use_engine:
+            self._check_counts(resource_id, connection=conn)

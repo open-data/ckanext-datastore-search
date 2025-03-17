@@ -30,7 +30,8 @@ Compatibility with Python versions:
 | Python version    | Compatible?   |
 | --------------- | ------------- |
 | 2.7 and earlier | no    |
-| 3.7 and later            | yes    |
+| 3.7 and later            | no    |
+| 3.8 and later            | yes    |
 
 Compatibility with SOLR versions:
 
@@ -90,6 +91,16 @@ To install ckanext-datastore-search:
 
 	# (optional, default: datastore_).
 	ckanext.datastore_search.prefix = ds_res_
+
+**ckanext.datastore_search.only_use_engine** defines whether or not to also insert records into the database:
+
+	# (optional, default: False).
+	ckanext.datastore_search.only_use_engine = True
+
+**ckanext.datastore_search.min_rows_for_index** sets the minimum number of database rows required to create and use a search index (mutually exclusive with only_use_engine):
+
+	# (optional, default: 100,000).
+	ckanext.datastore_search.min_rows_for_index = 40000
 
 **ckanext.datastore_search.redis.queue_name** controls the REDIS queue name to enqueue SOLR core creations on.
 
