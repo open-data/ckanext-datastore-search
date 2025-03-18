@@ -24,12 +24,13 @@ groups:
         required: false
       - key: ckanext.datastore_search.only_use_engine
         default: false
+        type: bool
         description: |
           Only use the search engine, never inserting records into the database.
           Because the DataDictionary saves data types and field descriptions into
           the database column comments, the database table and fields will still
           be created to maintain this functionality.
-        validators: ignore_missing
+        validators: ignore_missing boolean_validator
         required: false
       - key: ckanext.datastore_search.min_rows_for_index
         default: 100000
@@ -59,4 +60,30 @@ groups:
           Name of the SOLR configset to use when creating new cores.
         validators: ignore_missing
         example: ckan_ds_resource
+        required: false
+      - key: ckanext.datastore_search.download_proxy_address
+        default: None
+        description: |
+          NETLOC address for an internal proxy to download files.
+          This is only used in XLoader & DataPusher integration when using ckanext.datastore_search.only_use_engine.
+        validators: ignore_missing
+        example: 127.0.0.1:5001
+        required: false
+      - key: ckanext.datastore_search.download_verify_https
+        default: true
+        type: bool
+        description: |
+          Whether or not to verify HTTPS to download files.
+          This is only used in XLoader & DataPusher integration when using ckanext.datastore_search.only_use_engine.
+        validators: ignore_missing boolean_validator
+        example: false
+        required: false
+      - key: ckanext.datastore_search.always_reupload_file
+        default: false
+        type: bool
+        description: |
+          Whether or not to always ignore file hashes.
+          This is only used in XLoader & DataPusher integration.
+        validators: ignore_missing boolean_validator
+        example: true
         required: false

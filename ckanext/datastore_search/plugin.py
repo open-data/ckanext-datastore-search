@@ -1,3 +1,5 @@
+from logging import getLogger
+
 import ckan.plugins as plugins
 from ckan.common import CKANConfig
 
@@ -22,6 +24,8 @@ try:
 except ImportError:
     # type_ignore_reason: not redifined if ImportError
     HAS_XLOADER = False  # type: ignore
+
+log = getLogger(__name__)
 
 
 @plugins.toolkit.blanket.config_declarations
@@ -65,18 +69,49 @@ class DataStoreSearchPlugin(plugins.SingletonPlugin):
             'datastore_run_triggers': action.datastore_run_triggers,
         }
 
+    def _get_datastore_create_dict(self,
+                                   context: Context,
+                                   resource_id: str) -> DataDict:
+        backend = DatastoreSearchBackend.get_active_backend()
+        ds_result = plugins.toolkit.get_action('datastore_search')(
+            context, {'resource_id': resource_id,
+                      'limit': 0,
+                      'skip_search_engine': True})
+        return {
+            'resource_id': resource_id,
+            'fields': [f for f in ds_result['fields'] if
+                       f['id'] not in backend.default_search_fields]}
+
+    def _enqueue_pusher_create_index(self, resource_id: str):
+        backend = DatastoreSearchBackend.get_active_backend()
+        create_dict = self._get_datastore_create_dict(
+            {'ignore_auth': True}, resource_id)
+        create_dict['upload_file'] = True
+        log.debug('Creating search index for XLoader/DataPusher '
+                  'resource %s in background job...' % resource_id)
+        core_name = f'{backend.prefix}{resource_id}'
+        plugins.toolkit.enqueue_job(
+            fn=backend.create,
+            kwargs={'data_dict': create_dict},
+            title='SOLR Core creation %s' % core_name,
+            queue=backend.redis_callback_queue_name,
+            rq_kwargs={'timeout': plugins.toolkit.config.get(
+                'ckan.jobs.timeout', 300)})
+
     # IXloader, IDataPusher
     def after_upload(self,
                      context: Context,
                      resource_dict: DataDict,
                      dataset_dict: DataDict):
+        # because after_upload happens in the HTTP web callback hook,
+        # we need to enqueue a background job as this might take a long time,
+        # longer than a web request would take to respond.
+        self._enqueue_pusher_create_index(resource_dict['id'])
+
+    def can_upload(self,
+                   resource_id: str) -> bool:
         backend = DatastoreSearchBackend.get_active_backend()
-        ds_result = plugins.toolkit.get_action('datastore_search')(
-            context, {'resource_id': resource_dict.get('id'),
-                      'limit': 0,
-                      'skip_search_engine': True})
-        create_dict = {
-            'resource_id': resource_dict.get('id'),
-            'fields': [f for f in ds_result['fields'] if
-                       f['id'] not in backend.default_search_fields]}
-        backend.create(create_dict)
+        if backend.only_use_engine:
+            self._enqueue_pusher_create_index(resource_id)
+            return False
+        return True

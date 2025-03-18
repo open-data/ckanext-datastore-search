@@ -97,7 +97,7 @@ To install ckanext-datastore-search:
 	# (optional, default: False).
 	ckanext.datastore_search.only_use_engine = True
 
-**ckanext.datastore_search.min_rows_for_index** sets the minimum number of database rows required to create and use a search index (mutually exclusive with only_use_engine):
+**ckanext.datastore_search.min_rows_for_index** sets the minimum number of database rows required to create and use a search index (mutually exclusive with `only_use_engine`):
 
 	# (optional, default: 100,000).
 	ckanext.datastore_search.min_rows_for_index = 40000
@@ -121,6 +121,21 @@ To install ckanext-datastore-search:
 
 	# (optional, default: datastore_resource).
 	ckanext.datastore_search.solr.configset = ckan_ds_resource
+
+**ckanext.datastore_search.download_proxy_address** defines the NETLOC address to download files from. This is for XLoader/DataPusher plugin integrations. This is only used when using `only_use_engine`.
+
+	# (optional, default: None).
+	ckanext.datastore_search.download_proxy_address = 127.0.0.1:5001
+
+**ckanext.datastore_search.download_verify_https** specifies whether or not to verify HTTPS when downloading files. This is for XLoader/DataPusher plugin integrations. This is only used when using `only_use_engine`.
+
+	# (optional, default: true).
+	ckanext.datastore_search.download_verify_https = false
+
+**ckanext.datastore_search.always_reupload_file** specifies whether or not to always ignore matching file hashes when downloading files. This is for XLoader/DataPusher plugin integrations.
+
+	# (optional, default: false).
+	ckanext.datastore_search.always_reupload_file = true
 
 ## Tests
 

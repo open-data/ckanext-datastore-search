@@ -3,6 +3,11 @@ import json
 import requests
 import re
 from logging import getLogger
+from urllib.parse import urlsplit
+import time
+import hashlib
+import tempfile
+import math
 
 from typing import Any, Optional, Dict, cast, List
 from ckan.types import Context, DataDict
@@ -12,6 +17,7 @@ from ckan.lib.jobs import add_queue_name_prefix
 
 from ckanext.datastore.logic.action import datastore_search_sql
 from ckanext.datastore.backend.postgres import identifier
+from ckanext.datastore.blueprint import dump_to
 
 from ckanext.datastore_search.backend import (
     DatastoreSearchBackend,
@@ -21,6 +27,8 @@ from ckanext.datastore_search.backend import (
 
 MAX_ERR_LEN = 1000
 PSQL_TO_SOLR_WILCARD_MATCH = re.compile('^_?|_?$')
+CHUNK_SIZE = 16 * 1024
+DOWNLOAD_TIMEOUT = 30
 
 log = getLogger(__name__)
 DEBUG = config.get('debug', False)
@@ -182,7 +190,8 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             # type_ignore_reason: checking solr_records
             indexed_ids += [r['_id'] for r in solr_records]  # type: ignore
             if self.only_use_engine:
-                indexed_records += solr_records
+                # type_ignore_reason: checking solr_records
+                indexed_records += solr_records  # type: ignore
             offset += 1000
         core_name = f'{self.prefix}{resource_id}'
         errmsg = _('Failed to reindex records for %s' % core_name)
@@ -193,16 +202,16 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             where_statement = 'WHERE _id NOT IN ({indexed_ids})'.format(
                 indexed_ids=','.join(indexed_ids)) if \
                 only_missing and indexed_ids and \
-                    int(solr_total) <= int(ds_total) else ''
+                int(solr_total) <= int(ds_total) else ''
             existing_ids = []
             while gathering_ds_records:
                 sql_string = '''
                     SELECT {columns} FROM {table} {where_statement}
                     LIMIT 1000 OFFSET {offset}
                 '''.format(columns=ds_columns,
-                        table=table_name,
-                        where_statement=where_statement,
-                        offset=offset)
+                           table=table_name,
+                           where_statement=where_statement,
+                           offset=offset)
                 ds_result = datastore_search_sql(
                     context, {'sql': sql_string})
                 if not ds_result['records']:
@@ -283,12 +292,12 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         Create or update & reload/reindex a core if the fields have changed.
         """
         resource_id = data_dict.get('resource_id')
+        upload_file = data_dict.pop('upload_file', False)
         core_name = f'{self.prefix}{resource_id}'
         conn = self._make_connection(resource_id) if not connection else connection
         if not conn:
             errmsg = _('Could not create SOLR core %s') % core_name
             callback_queue = add_queue_name_prefix(self.redis_callback_queue_name)
-            # TODO: add callback_extras to pass records if self.only_use_engine
             enqueue_job(
                 # type_ignore_reason: incomplete typing
                 fn='solr_utils.create_solr_core.proc.create_solr_core',  # type: ignore
@@ -299,8 +308,11 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                                    'action.datastore_search_create_callback',
                     'callback_queue': callback_queue,
                     'callback_timeout': config.get('ckan.jobs.timeout', 300),
-                    'callback_extras': {'records': data_dict.get('records', None)}
-                    if self.only_use_engine else None},
+                    'callback_extras': {
+                        'records': data_dict.get('records', None)
+                        if self.only_use_engine else None,
+                        'upload_file': upload_file}
+                    },
                 title='SOLR Core creation %s' % core_name,
                 queue=self.redis_queue_name,
                 rq_kwargs={'timeout': 60})
@@ -335,6 +347,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                     'name': ds_field['id'],
                     'type': self.field_type_map[ds_field['type']],
                     'stored': True,
+                    'multiValued': False,
                     'indexed': True})
                 continue
             if self.field_type_map[ds_field['type']] == \
@@ -400,6 +413,99 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             log.debug('Removed SOLR Field %s for DataStore Resource %s' %
                       (f['name'], resource_id))
 
+        if upload_file:
+            res_dict = get_action('resource_show')(
+                {'ignore_auth': True}, {'id': resource_id})
+            if res_dict.get('format', '').lower() not in self.supported_file_formats:
+                raise DatastoreSearchException('Unsupported file format')
+            url = res_dict.get('url')
+            url_parts = urlsplit(url)
+            scheme = url_parts.scheme
+            if scheme not in ('http', 'https', 'ftp'):
+                raise DatastoreSearchException('Only http, https, and ftp '
+                                               'resources may be fetched.')
+            download_uri = url
+            headers = {}
+            site_user = get_action('get_site_user')({'ignore_auth': True}, {})
+            if res_dict.get('url_type') == 'upload':
+                headers['Authorization'] = site_user['apikey']
+                download_uri = url_parts._replace(
+                    query='{}&nonce={}'.format(url_parts.query, time.time()),
+                    netloc=(self.download_proxy_address or url_parts.netloc)).geturl()
+            log.debug('Fetching from: %s' % download_uri)
+            tmp_file = tempfile.TemporaryFile()
+            length = 0
+            m = hashlib.md5()
+            errmsg = _('Could not load file to SOLR core %s') % core_name
+            try:
+                if self.only_use_engine:
+                    response = requests.get(
+                        download_uri,
+                        verify=self.download_verify_https,
+                        stream=True,
+                        headers=headers,
+                        timeout=DOWNLOAD_TIMEOUT)
+                    response.raise_for_status()
+                    for chunk in response.iter_content(CHUNK_SIZE):
+                        length += len(chunk)
+                        tmp_file.write(chunk)
+                        m.update(chunk)
+                else:
+                    # type_ignore_reason: incomplete typing
+                    for chunk in dump_to(resource_id,  # type: ignore
+                                         fmt=res_dict['format'].lower(),
+                                         offset=0,
+                                         limit=None,
+                                         options={'bom': False},
+                                         sort='_id',
+                                         search_params={'skip_search_engine': True},
+                                         user=site_user['name']):
+                        length += len(chunk)
+                        tmp_file.write(chunk)
+                        m.update(chunk)
+                human_length = '0 bytes'
+                if length != 0:
+                    size_name = ('bytes', 'KB', 'MB', 'GB', 'TB')
+                    i = int(math.floor(math.log(length, 1024)))
+                    p = math.pow(1024, i)
+                    s = round(float(length) / p, 1)
+                    human_length = "%s %s" % (s, size_name[i])
+                log.debug('Downloaded ok - %s', human_length)
+                file_hash = m.hexdigest()
+                tmp_file.seek(0)
+                if not self.always_reupload_file and res_dict.get('hash') == file_hash:
+                    log.debug('The file hash has not changed, skipping loading into '
+                              'SOLR index for DataStore Resource %s' % resource_id)
+                    return
+                log.debug('Emptying SOLR index for DataStore Resource %s' %
+                          resource_id)
+                conn.delete(q='*:*', commit=False)
+                log.debug('Unindexed all DataStore records for DataStore Resource %s' %
+                          resource_id)
+                log.debug('Uploading file to SOLR core %s for DataStore Resource %s' %
+                          (core_name, resource_id))
+                separator = ','
+                if res_dict['format'].lower() == 'tsv':
+                    separator = '%09'
+                solr_response = json.loads(conn._send_request(
+                    method='POST',
+                    path='update?commit=false&trim=true&overwrite=false'
+                    '&header=true&separator=%s' % separator,
+                    headers={'Content-Type': 'application/csv'},
+                    body=tmp_file.read()))
+                if solr_response.get('errors'):
+                    raise DatastoreSearchException(
+                        errmsg if not DEBUG else solr_response.get('errors'))
+            except pysolr.SolrError as e:
+                raise DatastoreSearchException(
+                    errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
+            except Exception as e:
+                raise DatastoreSearchException(e)
+            finally:
+                tmp_file.close()
+            conn.commit(waitSearcher=False)
+            return
+
         if new_fields or updated_fields or remove_fields:
             self.reindex(resource_id, connection=conn)
 
@@ -422,6 +528,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             log.debug('SOLR core creation stderr: %s' % data_dict.get('stderr'))
 
         resource_id = data_dict.get('core_name', '').replace(self.prefix, '')
+        upload_file = data_dict.get('extras', {}).get('upload_file', False)
         context = self._get_site_context()
         ds_result = get_action('datastore_search')(
             context, {'resource_id': resource_id,
@@ -430,10 +537,17 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         create_dict = {
             'resource_id': resource_id,
             'fields': [f for f in ds_result['fields'] if
-                       f['id'] not in self.default_search_fields]}
+                       f['id'] not in self.default_search_fields],
+            'upload_file': upload_file}
+        # call create again to get datastore fields and data types to build schema
         self.create(create_dict)
 
-        if self.only_use_engine and data_dict.get('extras', {}).get('records'):
+        if (
+            not upload_file and
+            self.only_use_engine and
+            data_dict.get('extras', {}).get('records')
+        ):
+            # use datastore_upsert with insert to be able to use dry_run to get _id
             get_action('datastore_upsert')(
                 context, {'resource_id': resource_id,
                           'records': data_dict.get('extras', {}).get('records'),
@@ -534,7 +648,6 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         """
         Removes records from the SOLR index, or deletes the core entirely.
         """
-        # FIXME: delete core if count less than min_rows_for_index??
         resource_id = data_dict.get('resource_id')
         core_name = f'{self.prefix}{resource_id}'
         conn = self._make_connection(resource_id) if not connection else connection
@@ -547,7 +660,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             errmsg = _('Could not delete SOLR core %s') % core_name
             try:
                 conn.delete(q='*:*', commit=False)
-                log.debug('Unindexed all DataStore records for Resource %s' %
+                log.debug('Unindexed all DataStore records for DataStore Resource %s' %
                           resource_id)
             except pysolr.SolrError as e:
                 raise DatastoreSearchException(
@@ -564,16 +677,17 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             return
 
         if self.only_use_engine:
+            # will not have deleted_records returned, so need to do this by SOLR query
             fq = []
             for key, value in data_dict.get('filters', {}).items():
                 fq.append('%s:%s' % (key, value))
             errmsg = _('Could not delete DataStore record(s) '
-                       'q=%s in SOLR core %s') % \
-                        (' AND '.join(fq), core_name)
+                       'q=%s in SOLR core %s') % (' AND '.join(fq), core_name)
             collecting_deleted_records = True
             offset = 0
             deleted_records = []
             try:
+                # do a search before deleting to emulate deleted_records
                 while collecting_deleted_records:
                     results = conn.search(q=' AND '.join(fq),
                                           start=offset,

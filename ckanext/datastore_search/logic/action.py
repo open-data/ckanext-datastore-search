@@ -41,25 +41,58 @@ def _get_datastore_count(context: Context, resource_id: str) -> int:
     return int(ds_result['total'])
 
 
+def _using_pusher(resource_id: str) -> bool:
+    has_puser_plugin = False
+    try:
+        toolkit.get_action('xloader_submit')
+        has_puser_plugin = True
+    except KeyError:
+        pass
+    try:
+        toolkit.get_action('datapusher_submit')
+        has_puser_plugin = True
+    except KeyError:
+        pass
+    if not has_puser_plugin:
+        return False
+    res_dict = toolkit.get_action('resource_show')(
+        {'ignore_auth': True}, {'id': resource_id})
+    if (res_dict.get('url_type') == 'upload' or not res_dict.get('url_type')):
+        return True
+    return False
+
+
 @toolkit.chained_action
 def datastore_create(up_func: Action,
                      context: Context,
                      data_dict: DataDict) -> ChainedAction:
+    if _using_pusher(data_dict['resource_id']):
+        # if using XLoader or DataPusher, skip search index creation here
+        if DEBUG:
+            log.debug('Skipping search index creation in action datastore_create '
+                      'for XLoader/DataPusher resource %s' % data_dict['resource_id'])
+        return up_func(context, data_dict)
     data_dict['include_records'] = True
     backend = DatastoreSearchBackend.get_active_backend()
+    records = []
     if backend.only_use_engine:
+        # do not insert records into database
         records = data_dict.pop('records', None)
     func_result = up_func(context, data_dict)
     if backend.only_use_engine:
+        # add records back to result for search index insertion
         func_result['records'] = records
-    elif ds_count := _get_datastore_count(context, data_dict['resource_id']) < \
-        backend.min_rows_for_index:
-            if DEBUG:
-                log.debug(SEARCH_INDEX_SKIP_MSG %
-                          (data_dict['resource_id'],
-                           ds_count,
-                           backend.min_rows_for_index))
-            return func_result
+    elif (
+        ds_count := _get_datastore_count(context, data_dict['resource_id']) <
+        backend.min_rows_for_index
+    ):
+        # do not try to create search index if not enough rows
+        if DEBUG:
+            log.debug(SEARCH_INDEX_SKIP_MSG %
+                      (data_dict['resource_id'],
+                       ds_count,
+                       backend.min_rows_for_index))
+        return func_result
     try:
         backend.create(dict(func_result))
     except DatastoreSearchException:
@@ -74,17 +107,21 @@ def datastore_upsert(up_func: Action,
     data_dict['include_records'] = True
     backend = DatastoreSearchBackend.get_active_backend()
     if backend.only_use_engine:
+        # use dry run to get _id back in records
         data_dict['dry_run'] = True
     func_result = up_func(context, data_dict)
-    if not backend.only_use_engine and \
-        (ds_count := _get_datastore_count(context, data_dict['resource_id'])) < \
-        backend.min_rows_for_index:
-            if DEBUG:
-                log.debug(SEARCH_INDEX_SKIP_MSG %
-                          (data_dict['resource_id'],
-                           ds_count,
-                           backend.min_rows_for_index))
-            return func_result
+    if (
+        not backend.only_use_engine and
+        (ds_count := _get_datastore_count(context, data_dict['resource_id'])) <
+        backend.min_rows_for_index
+    ):
+        # do not try to update search index if not enough rows
+        if DEBUG:
+            log.debug(SEARCH_INDEX_SKIP_MSG %
+                      (data_dict['resource_id'],
+                       ds_count,
+                       backend.min_rows_for_index))
+        return func_result
     try:
         backend.upsert(dict(func_result))
     except DatastoreSearchException:
@@ -118,14 +155,24 @@ def datastore_search(up_func: Action,
         raise toolkit.ValidationError(errors)
     backend = DatastoreSearchBackend.get_active_backend()
     if not backend.only_use_engine and data_dict.pop('skip_search_engine', False):
+        # allow sysadmins to skip search index and query database
         return up_func(context, data_dict)
+    # still use the database metadata like column data types and comments
     ds_meta = up_func(context, {'resource_id': data_dict.get('resource_id'),
+                                'include_total': True,
                                 'limit': 0})
-    # FIXME: raise DatastoreSearchException if count less than min_rows_for_index??
+    if (
+        not backend.only_use_engine and
+        int(ds_meta['total']) < backend.min_rows_for_index
+    ):
+        # do not query search index if not enough rows
+        return up_func(context, data_dict)
+    records = []
     try:
         records = backend.search(dict(data_dict))
     except DatastoreSearchException:
         if not backend.only_use_engine:
+            # fallback to database query
             return up_func(context, data_dict)
     return dict(ds_meta, records=records)
 

@@ -22,6 +22,7 @@ class DatastoreSearchBackend:
 
     _backends = {}
     _active_backend: "DatastoreSearchBackend"
+    supported_file_formats = ['csv', 'tsv']
     url = plugins.toolkit.config.get(
         'ckanext.datastore_search.url')
     prefix = plugins.toolkit.config.get(
@@ -38,6 +39,14 @@ class DatastoreSearchBackend:
             'ckanext.datastore_search.only_use_engine', False))
     min_rows_for_index = int(plugins.toolkit.config.get(
         'ckanext.datastore_search.min_rows_for_index', 100000))
+    download_proxy_address = plugins.toolkit.config.get(
+        'ckanext.datastore_search.download_proxy_address')
+    download_verify_https = plugins.toolkit.asbool(
+        plugins.toolkit.config.get(
+            'ckanext.datastore_search.download_verify_https', True))
+    always_reupload_file = plugins.toolkit.asbool(
+        plugins.toolkit.config.get(
+            'ckanext.datastore_search.always_reupload_file', False))
 
     @classmethod
     def register_backends(cls):
