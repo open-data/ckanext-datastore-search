@@ -8,9 +8,10 @@ import time
 import hashlib
 import tempfile
 import math
+from datetime import datetime
 
-from typing import Any, Optional, Dict, cast, List
-from ckan.types import Context, DataDict
+from typing import Any, Optional, Dict, List
+from ckan.types import DataDict
 
 from ckan.plugins.toolkit import _, config, get_action, enqueue_job
 from ckan.lib.jobs import add_queue_name_prefix
@@ -19,6 +20,10 @@ from ckanext.datastore.logic.action import datastore_search_sql
 from ckanext.datastore.backend.postgres import identifier
 from ckanext.datastore.blueprint import dump_to
 
+from ckanext.datastore_search.utils import (
+    get_site_context,
+    get_datastore_create_dict
+)
 from ckanext.datastore_search.backend import (
     DatastoreSearchBackend,
     DatastoreSearchException
@@ -39,7 +44,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
     SOLR class for datastore search backend.
     """
     timeout = config.get('solr_timeout')
-    default_search_fields = ['_id', '_version_', 'indexed_ts', '_text_']
+    default_search_fields = ['_id', '_version_', 'indexed_ts', 'index_id', '_text_']
     configset_name = config.get('ckanext.datastore_search.solr.configset',
                                 'datastore_resource')
 
@@ -58,6 +63,10 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             'smallint': 'int',
             'integer': 'int',
             'bigint': 'int',
+            'int2': 'int',
+            'int4': 'int',
+            'int8': 'int',
+            'int16': 'int',
             'decimal': 'float',
             'numeric': 'float',
             'real': 'double',
@@ -65,6 +74,9 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             'smallserial': 'int',
             'serial': 'int',
             'bigserial': 'int',
+            'serial4': 'int',
+            'serial8': 'int',
+            'serial16': 'int',
             # monetary types
             'money': 'float',
             # char types
@@ -125,13 +137,6 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                                 timeout=self.timeout)
         return resp.json()
 
-    def _get_site_context(self) -> Context:
-        """
-        Return a CKAN Context for the system user.
-        """
-        site_user = get_action('get_site_user')({'ignore_auth': True}, {})
-        return cast(Context, {'user': site_user['name']})
-
     def reindex(self,
                 resource_id: Optional[str] = None,
                 connection: Optional[pysolr.Solr] = None,
@@ -143,7 +148,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             return
         # FIXME: put this in a background task as a larger
         #        DS Resource could take a long time??
-        context = self._get_site_context()
+        context = get_site_context()
         core_name = f'{self.prefix}{resource_id}'
         conn = self._make_connection(resource_id) if not connection else connection
 
@@ -188,12 +193,21 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             if not solr_records:
                 gathering_solr_records = False
             # type_ignore_reason: checking solr_records
-            indexed_ids += [r['_id'] for r in solr_records]  # type: ignore
+            indexed_ids += [str(r['_id']) for r in solr_records]  # type: ignore
             if self.only_use_engine:
                 # type_ignore_reason: checking solr_records
                 indexed_records += solr_records  # type: ignore
             offset += 1000
         core_name = f'{self.prefix}{resource_id}'
+
+        # clear index
+        if not only_missing:
+            log.debug('Emptying SOLR index for DataStore Resource %s' %
+                      resource_id)
+            conn.delete(q='*:*', commit=False)
+            log.debug('Unindexed all DataStore records for DataStore Resource %s' %
+                      resource_id)
+
         errmsg = _('Failed to reindex records for %s' % core_name)
         if not self.only_use_engine:
             gathering_ds_records = True
@@ -203,7 +217,6 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                 indexed_ids=','.join(indexed_ids)) if \
                 only_missing and indexed_ids and \
                 int(solr_total) <= int(ds_total) else ''
-            existing_ids = []
             while gathering_ds_records:
                 sql_string = '''
                     SELECT {columns} FROM {table} {where_statement}
@@ -217,7 +230,6 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                 if not ds_result['records']:
                     gathering_ds_records = False
                 for r in ds_result['records']:
-                    existing_ids.append(str(r['_id']))
                     if only_missing and indexed_ids and str(r['_id']) in indexed_ids:
                         continue
                     try:
@@ -230,17 +242,6 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                         raise DatastoreSearchException(
                             errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
                 offset += 1000
-            orphan_ids = set(indexed_ids) - set(existing_ids)
-            for orphan_id in orphan_ids:
-                try:
-                    conn.delete(q='_id:%s' % orphan_id, commit=False)
-                    if DEBUG:
-                        log.debug('Unindexed DataStore record '
-                                  '_id=%s for Resource %s' %
-                                  (orphan_id, resource_id))
-                except pysolr.SolrError as e:
-                    raise DatastoreSearchException(
-                        errmsg if not DEBUG else e.args[0][:MAX_ERR_LEN])
         else:
             for r in indexed_records:
                 try:
@@ -271,10 +272,10 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
                 _('SOLR core does not exist for DataStore Resource %s') % resource_id)
 
         ds_result = get_action('datastore_search')(
-            self._get_site_context(), {'resource_id': resource_id,
-                                       'limit': 0,
-                                       'include_total': True,
-                                       'skip_search_engine': True})
+            get_site_context(), {'resource_id': resource_id,
+                                 'limit': 0,
+                                 'include_total': True,
+                                 'skip_search_engine': True})
         ds_total = ds_result['total']
         solr_result = conn.search(q='*:*', rows=0)
         solr_total = solr_result.hits
@@ -529,16 +530,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
 
         resource_id = data_dict.get('core_name', '').replace(self.prefix, '')
         upload_file = data_dict.get('extras', {}).get('upload_file', False)
-        context = self._get_site_context()
-        ds_result = get_action('datastore_search')(
-            context, {'resource_id': resource_id,
-                      'limit': 0,
-                      'skip_search_engine': True})
-        create_dict = {
-            'resource_id': resource_id,
-            'fields': [f for f in ds_result['fields'] if
-                       f['id'] not in self.default_search_fields],
-            'upload_file': upload_file}
+        create_dict = get_datastore_create_dict(resource_id, upload_file)
         # call create again to get datastore fields and data types to build schema
         self.create(create_dict)
 
@@ -549,9 +541,10 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
         ):
             # use datastore_upsert with insert to be able to use dry_run to get _id
             get_action('datastore_upsert')(
-                context, {'resource_id': resource_id,
-                          'records': data_dict.get('extras', {}).get('records'),
-                          'method': 'insert'})
+                get_site_context(),
+                {'resource_id': resource_id,
+                 'records': data_dict.get('extras', {}).get('records'),
+                 'method': 'insert'})
 
     def upsert(self,
                data_dict: DataDict,
@@ -569,8 +562,25 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
 
         if data_dict['records']:
             for r in data_dict['records']:
+                # TODO: do any other value type transforms that might be needed...
+                for k, v in r.items():
+                    if isinstance(v, datetime):
+                        r[k] = v.isoformat() + 'Z'
+                solr_record = self.search({
+                    'resource_id': resource_id,
+                    'offset': 0,
+                    'limit': 1,
+                    'query': '_id:%s' % r['_id']},
+                    connection=conn)
+                _r = dict(r)
+                if solr_record:
+                    _r = dict(solr_record[0], **_r)
+                for f in self.default_search_fields:
+                    if f == '_id' or f == 'index_id':
+                        continue
+                    _r.pop(f, None)
                 try:
-                    conn.add(docs=[r], commit=False)
+                    conn.add(docs=[_r], commit=False)
                     if DEBUG:
                         log.debug('Indexed DataStore record _id=%s for Resource %s' %
                                   (r['_id'], resource_id))
@@ -627,6 +637,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             'q': q,
             'q.op': 'AND',
             'fq': fq,
+            'fl': data_dict.get('fl', None),
             'df': data_dict.get('df', '_text_'),
             'start': data_dict.get('offset', 0),
             'rows': data_dict.get('limit', 1000),

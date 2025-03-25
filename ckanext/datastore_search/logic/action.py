@@ -7,6 +7,10 @@ from ckan.plugins import toolkit
 from ckan.lib.navl.dictization_functions import validate
 
 from ckanext.datastore.logic.schema import datastore_search_schema
+from ckanext.datastore_search.utils import (
+    get_datastore_count,
+    is_using_pusher
+)
 from ckanext.datastore_search.backend import (
     DatastoreSearchBackend,
     DatastoreSearchException
@@ -33,40 +37,11 @@ def datastore_search_create_callback(data_dict: DataDict):
     backend.create_callback(data_dict)
 
 
-def _get_datastore_count(context: Context, resource_id: str) -> int:
-    ds_result = toolkit.get_action('datastore_search')(
-        context, {'resource_id': resource_id, 'limit': 0,
-                  'include_total': True,
-                  'skip_search_engine': True})
-    return int(ds_result['total'])
-
-
-def _using_pusher(resource_id: str) -> bool:
-    has_puser_plugin = False
-    try:
-        toolkit.get_action('xloader_submit')
-        has_puser_plugin = True
-    except KeyError:
-        pass
-    try:
-        toolkit.get_action('datapusher_submit')
-        has_puser_plugin = True
-    except KeyError:
-        pass
-    if not has_puser_plugin:
-        return False
-    res_dict = toolkit.get_action('resource_show')(
-        {'ignore_auth': True}, {'id': resource_id})
-    if (res_dict.get('url_type') == 'upload' or not res_dict.get('url_type')):
-        return True
-    return False
-
-
 @toolkit.chained_action
 def datastore_create(up_func: Action,
                      context: Context,
                      data_dict: DataDict) -> ChainedAction:
-    if _using_pusher(data_dict['resource_id']):
+    if is_using_pusher(data_dict['resource_id']):
         # if using XLoader or DataPusher, skip search index creation here
         if DEBUG:
             log.debug('Skipping search index creation in action datastore_create '
@@ -83,7 +58,7 @@ def datastore_create(up_func: Action,
         # add records back to result for search index insertion
         func_result['records'] = records
     elif (
-        ds_count := _get_datastore_count(context, data_dict['resource_id']) <
+        ds_count := get_datastore_count(data_dict['resource_id']) <
         backend.min_rows_for_index
     ):
         # do not try to create search index if not enough rows
@@ -112,7 +87,7 @@ def datastore_upsert(up_func: Action,
     func_result = up_func(context, data_dict)
     if (
         not backend.only_use_engine and
-        (ds_count := _get_datastore_count(context, data_dict['resource_id'])) <
+        (ds_count := get_datastore_count(data_dict['resource_id'])) <
         backend.min_rows_for_index
     ):
         # do not try to update search index if not enough rows
@@ -167,9 +142,14 @@ def datastore_search(up_func: Action,
     ):
         # do not query search index if not enough rows
         return up_func(context, data_dict)
+    fl = ['_id']
+    for ds_field in ds_meta.get('fields', []):
+        if ds_field['id'] in backend.default_search_fields:
+            continue
+        fl.append(ds_field['id'])
     records = []
     try:
-        records = backend.search(dict(data_dict))
+        records = backend.search(dict(data_dict, fl=fl))
     except DatastoreSearchException:
         if not backend.only_use_engine:
             # fallback to database query

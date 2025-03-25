@@ -3,18 +3,21 @@ from logging import getLogger
 import ckan.plugins as plugins
 from ckan.common import CKANConfig
 
-from typing import Dict, Union, Type
+from typing import Dict, Union, Type, List
 from ckan.types import (
     Context,
     DataDict,
     Action,
     ChainedAction
 )
+from click import Command
 
 from ckanext.datastore_search.interfaces import IDatastoreSearchBackend
 from ckanext.datastore_search.backend import DatastoreSearchBackend
 from ckanext.datastore_search.backend.solr import DatastoreSolrBackend
 from ckanext.datastore_search.logic import action
+from ckanext.datastore_search.cli import datastore_search
+from ckanext.datastore_search.utils import get_datastore_create_dict
 
 from ckanext.datapusher.interfaces import IDataPusher
 try:
@@ -32,6 +35,7 @@ log = getLogger(__name__)
 class DataStoreSearchPlugin(plugins.SingletonPlugin):
     plugins.implements(plugins.IConfigurable, inherit=True)
     plugins.implements(plugins.IConfigurer)
+    plugins.implements(plugins.IClick)
     plugins.implements(plugins.IActions)
     plugins.implements(IDatastoreSearchBackend, inherit=True)
     plugins.implements(IDataPusher, inherit=True)
@@ -59,6 +63,10 @@ class DataStoreSearchPlugin(plugins.SingletonPlugin):
 
         config['ckan.datastore.sqlsearch.enabled'] = False
 
+    # IClick
+    def get_commands(self) -> List[Command]:
+        return [datastore_search]
+
     # IActions
     def get_actions(self) -> Dict[str, Union[Action, ChainedAction]]:
         return {
@@ -69,24 +77,9 @@ class DataStoreSearchPlugin(plugins.SingletonPlugin):
             'datastore_run_triggers': action.datastore_run_triggers,
         }
 
-    def _get_datastore_create_dict(self,
-                                   context: Context,
-                                   resource_id: str) -> DataDict:
-        backend = DatastoreSearchBackend.get_active_backend()
-        ds_result = plugins.toolkit.get_action('datastore_search')(
-            context, {'resource_id': resource_id,
-                      'limit': 0,
-                      'skip_search_engine': True})
-        return {
-            'resource_id': resource_id,
-            'fields': [f for f in ds_result['fields'] if
-                       f['id'] not in backend.default_search_fields]}
-
     def _enqueue_pusher_create_index(self, resource_id: str):
         backend = DatastoreSearchBackend.get_active_backend()
-        create_dict = self._get_datastore_create_dict(
-            {'ignore_auth': True}, resource_id)
-        create_dict['upload_file'] = True
+        create_dict = get_datastore_create_dict(resource_id, upload_file=True)
         log.debug('Creating search index for XLoader/DataPusher '
                   'resource %s in background job...' % resource_id)
         core_name = f'{backend.prefix}{resource_id}'
