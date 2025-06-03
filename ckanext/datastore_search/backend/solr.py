@@ -720,6 +720,7 @@ class DatastoreSolrBackend(DatastoreSearchBackend):
             return
 
         for record in data_dict.get('deleted_records', []):
+            # FIXME: deleted_records return now has a hard limit in Core code...
             errmsg = _('Could not delete DataStore record _id=%s in SOLR core %s') % \
                        (record['_id'], core_name)
             try:

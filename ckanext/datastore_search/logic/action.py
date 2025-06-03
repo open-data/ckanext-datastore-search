@@ -108,7 +108,7 @@ def datastore_upsert(up_func: Action,
 def datastore_delete(up_func: Action,
                      context: Context,
                      data_dict: DataDict) -> ChainedAction:
-    data_dict['include_records'] = True
+    data_dict['include_deleted_records'] = True
     backend = DatastoreSearchBackend.get_active_backend()
     func_result = up_func(context, data_dict)
     try:
@@ -150,6 +150,7 @@ def datastore_search(up_func: Action,
     records = []
     try:
         records = backend.search(dict(data_dict, fl=fl))
+        ds_meta['from_search_index'] = True
     except DatastoreSearchException:
         if not backend.only_use_engine:
             # fallback to database query
